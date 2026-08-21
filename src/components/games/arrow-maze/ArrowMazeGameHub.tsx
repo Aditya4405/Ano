@@ -53,10 +53,10 @@ export function ArrowMazeGameHub() {
   const searchParams = useSearchParams();
   const roomCodeParam = searchParams?.get('room');
 
-  const { user } = useUserStore();
-  const userId = user?.id || 'guest';
-  const nickname = user?.username || user?.name || 'Player';
-  const avatar = user?.avatar;
+  const { id, nickname: userNickname, avatar: userAvatar } = useUserStore();
+  const userId = id || 'guest';
+  const nickname = userNickname || 'Player';
+  const avatar = userAvatar || undefined;
 
   const {
     multiplayerMode, setMultiplayerMode,
