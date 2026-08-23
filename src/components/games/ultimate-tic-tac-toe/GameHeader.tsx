@@ -1,30 +1,28 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Volume2, VolumeX, BookOpen, Clock, RefreshCw } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowLeft, BookOpen, Clock, RefreshCw } from 'lucide-react';
 
 interface GameHeaderProps {
-  onBack: () => void;
+  onBack?: () => void;
+  backTitle?: string;
   onOpenRules: () => void;
   turnExpiresAt?: number | null;
   turnTimeLeft?: number;
   isMyTurn?: boolean;
   status?: string;
-  isMuted: boolean;
-  onToggleMute: () => void;
   onResetPractice?: () => void;
   isSinglePlayer?: boolean;
 }
 
 export const GameHeader: React.FC<GameHeaderProps> = ({
   onBack,
+  backTitle,
   onOpenRules,
   turnExpiresAt,
   turnTimeLeft: propTimeLeft,
-  isMyTurn,
   status,
-  isMuted,
-  onToggleMute,
   onResetPractice,
   isSinglePlayer
 }) => {
@@ -50,26 +48,36 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
   const formattedTime = secondsLeft < 10 ? `0${secondsLeft}` : `${secondsLeft}`;
 
   return (
-    <header className="w-full flex items-center justify-between px-3 py-2.5 bg-neutral-950/80 border-b border-white/10 backdrop-blur-md z-30 select-none font-sans flex-shrink-0">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onBack}
-          className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer border border-white/10"
-          title="Back"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </button>
+    <header className="flex items-center justify-between p-4 bg-white/5 border-b border-white/10 flex-shrink-0 z-30 backdrop-blur-md font-sans">
+      <div className="flex items-center gap-3 sm:gap-4">
+        {onBack ? (
+          <button
+            onClick={onBack}
+            className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
+            title={backTitle || "Back"}
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+        ) : (
+          <Link
+            href="/dashboard/games"
+            className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
+            title="Back to Arcade"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+        )}
 
-        <div className="flex items-center gap-2.5">
-          <span className="text-xl">📐</span>
-          <div>
-            <h1 className="text-sm sm:text-base font-black tracking-wide text-white leading-none">
-              Ultimate Tic-Tac-Toe
-            </h1>
-            <span className="text-[10px] text-cyan-400 font-semibold tracking-wide">
-              {isSinglePlayer ? 'Practice vs AI' : 'Multiplayer Arena'}
-            </span>
-          </div>
+        <Link href="/dashboard" className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
+          <img src="/ano-logo.png" alt="Ano Logo" className="w-8 h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
+          <span className="text-lg font-bold text-white tracking-wide">Ano</span>
+        </Link>
+
+        <div className="ml-1 sm:ml-2 border-l border-white/20 pl-3 sm:pl-4">
+          <h1 className="text-base sm:text-lg md:text-xl font-bold text-white flex items-center gap-2">
+            <span>📐</span>
+            <span className="truncate">Ultimate Tic-Tac-Toe</span>
+          </h1>
         </div>
       </div>
 
@@ -92,8 +100,8 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
         {isSinglePlayer && onResetPractice && (
           <button
             onClick={onResetPractice}
-            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white transition-all cursor-pointer"
-            title="Restart Match"
+            className="p-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white transition-all cursor-pointer"
+            title="Restart Practice Match"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -102,19 +110,10 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
         {/* Rules Button */}
         <button
           onClick={onOpenRules}
-          className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-xs font-bold text-gray-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer"
+          className="px-3.5 py-1.5 bg-white/5 border border-white/10 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors hover:bg-white/10 cursor-pointer"
         >
-          <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
+          <BookOpen className="w-4 h-4 text-cyan-400" />
           <span className="hidden sm:inline">Rules</span>
-        </button>
-
-        {/* Mute Toggle */}
-        <button
-          onClick={onToggleMute}
-          className="p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white transition-all cursor-pointer"
-          title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
-        >
-          {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
         </button>
       </div>
     </header>

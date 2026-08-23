@@ -25,7 +25,7 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
   const isMyTurn = currentTurnSymbol === mySymbol;
 
   return (
-    <div className="w-full max-w-xl mx-auto px-3 py-1 flex items-center justify-between gap-2 select-none font-sans flex-shrink-0">
+    <div className="w-full max-w-xl mx-auto px-3 py-1 flex items-center justify-between gap-2 font-sans flex-shrink-0">
       {/* Player X Card */}
       <motion.div
         animate={isTurnX ? { scale: 1.02 } : { scale: 1 }}

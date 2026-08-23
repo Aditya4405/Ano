@@ -32,7 +32,7 @@ class LobbyService {
         turnTimer: (gameType === 'COLOR_WARS' || gameType === 'DOTS_AND_BOXES' || gameType === 'CHAMBER_CLASH' || gameType === 'ULTIMATE_TIC_TAC_TOE') ? 30 : undefined, // 30s turn timer
         pairCount: gameType === 'MEMORY_MATCH' ? 12 : undefined, // Default 12 pairs (4x6) for Memory Match
         mode: gameType === 'PAPER_FALL' ? 'SURVIVAL' : undefined,
-        difficulty: (gameType === 'PAPER_FALL' || gameType === 'ULTIMATE_TIC_TAC_TOE') ? 'MEDIUM' : undefined,
+        difficulty: gameType === 'PAPER_FALL' ? 'MEDIUM' : undefined,
         matchDuration: gameType === 'PAPER_FALL' ? 60 : undefined,
         multiplayerMode: gameType === 'ARROW_MAZE' ? 'LEVELS' : undefined,
         levelCount: gameType === 'ARROW_MAZE' ? 10 : undefined,

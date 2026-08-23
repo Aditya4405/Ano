@@ -101,6 +101,7 @@ interface UltimateTicTacToeStore {
   invitePlayer: (gameId: string, senderId: string, senderName: string, targetUserId: string) => void;
   updateSettings: (gameId: string, hostId: string, settings: Partial<LobbySettings>) => void;
   startGame: (gameId: string, hostId: string) => void;
+  playAgain: (gameId: string, userId: string) => void;
   makeMove: (gameId: string, userId: string, boardIndex: number, cellIndex: number) => void;
   clearState: () => void;
   setError: (msg: string | null) => void;
@@ -161,6 +162,11 @@ export const useUltimateTicTacToeStore = create<UltimateTicTacToeStore>((set, ge
   startGame: (gameId, hostId) => {
     const socket = socketService.getSocket();
     socket.emit('game_start', { gameId, hostId });
+  },
+
+  playAgain: (gameId, userId) => {
+    const socket = socketService.getSocket();
+    socket.emit('game_action', { gameId, userId, action: 'play_again' });
   },
 
   makeMove: (gameId, userId, boardIndex, cellIndex) => {

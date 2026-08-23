@@ -3,6 +3,7 @@ import { API_URL } from "@/lib/config";
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { useUserStore } from "@/store/useUserStore";
 import { ArrowLeft, Loader2, MessageSquare, Trophy, Medal, ChevronUp, X } from "lucide-react";
 import { getGameDefinition } from "@/config/gamesRegistry";
@@ -80,25 +81,25 @@ export default function SinglePlayerGamePage() {
   return (
     <div className="flex flex-col h-full bg-black min-h-screen">
       {/* Top Banner */}
-      <div className="flex flex-wrap items-center justify-between p-3 md:p-4 bg-white/5 border-b border-white/10 flex-shrink-0 gap-2">
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={() => router.push("/dashboard/games")}
-            className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+      <div className="flex items-center justify-between p-4 bg-white/5 border-b border-white/10 flex-shrink-0 z-30 backdrop-blur-md">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <Link 
+            href="/dashboard/games"
+            className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
+            title="Back to Arcade"
           >
             <ArrowLeft className="w-5 h-5" />
-          </button>
+          </Link>
           
-          <button onClick={() => router.push("/dashboard")} className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform">
-              <MessageSquare className="w-4 h-4 text-white" />
-            </div>
+          <Link href="/dashboard" className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
+            <img src="/ano-logo.png" alt="Ano Logo" className="w-8 h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
             <span className="text-lg font-bold text-white tracking-wide">Ano</span>
-          </button>
+          </Link>
           
-          <div className="ml-2 border-l border-white/20 pl-4">
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              {getGameName()}
+          <div className="ml-1 sm:ml-2 border-l border-white/20 pl-3 sm:pl-4">
+            <h1 className="text-base sm:text-lg md:text-xl font-bold text-white flex items-center gap-2">
+              {gameDef?.icon && <span>{gameDef.icon}</span>}
+              <span className="truncate">{getGameName()}</span>
             </h1>
           </div>
         </div>

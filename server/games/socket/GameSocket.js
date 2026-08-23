@@ -335,39 +335,56 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
 
     if (action === 'play_again' && engine.status === 'FINISHED') {
-      const hostP = Array.from(engine.players.values()).find(p => p.role === 'HOST');
-      if (hostP && hostP.userId === userId) {
-        // Re-create lobby with same ID and current players
-        const LobbyService = require('../lobby/LobbyService');
-        LobbyService.lobbies.set(gameId, {
-          id: gameId,
-          gameType: engine.gameType,
-          hostId: userId,
-          hostName: hostP.nickname,
-          players: new Map(Array.from(engine.players.values()).map(p => [
-            p.userId,
-            {
-              userId: p.userId,
-              nickname: p.nickname,
-              role: p.role,
-              isReady: p.role === 'HOST'
-            }
-          ])),
-          settings: engine.settings,
-          status: 'WAITING',
-          createdAt: new Date(),
-          maxPlayers: engine.gameType === 'SCRIBBLE' ? 12 : 8,
-          isPrivate: engine.settings.isPrivate || false
-        });
-        
-        activeGames.delete(gameId);
-        io.to(gameId).emit('lobby_state', serializeLobby(LobbyService.lobbies.get(gameId)));
-        
-        broadcastLobbies();
-        return;
-      } else {
-        return socket.emit('game_error', { message: 'Only host can restart the game' });
+      const isParticipant = engine.players.has(userId);
+      if (!isParticipant) {
+        return socket.emit('game_error', { message: 'You are not a participant in this game.' });
       }
+
+      const hostP = Array.from(engine.players.values()).find(p => p.role === 'HOST') || Array.from(engine.players.values())[0];
+      const hostId = hostP ? hostP.userId : userId;
+      const hostName = hostP ? hostP.nickname : (engine.players.get(userId)?.nickname || 'Host');
+
+      // Re-create lobby with same ID and current players
+      const LobbyService = require('../lobby/LobbyService');
+      const newLobby = {
+        id: gameId,
+        gameType: engine.gameType,
+        hostId: hostId,
+        hostName: hostName,
+        players: new Map(Array.from(engine.players.values()).map(p => [
+          p.userId,
+          {
+            userId: p.userId,
+            nickname: p.nickname,
+            role: p.userId === hostId ? 'HOST' : 'PLAYER',
+            isReady: p.userId === hostId
+          }
+        ])),
+        settings: engine.settings,
+        status: 'WAITING',
+        createdAt: new Date(),
+        maxPlayers: engine.gameType === 'SCRIBBLE' ? 12 : (engine.gameType === 'ULTIMATE_TIC_TAC_TOE' ? 2 : 8),
+        isPrivate: engine.settings?.isPrivate || false
+      };
+
+      LobbyService.lobbies.set(gameId, newLobby);
+      activeGames.delete(gameId);
+
+      const serialized = serializeLobby(newLobby);
+      io.to(gameId).emit('lobby_state', serialized);
+
+      // Also directly emit to all participant sockets to ensure delivery
+      engine.players.forEach((p, pId) => {
+        const sockets = onlineUsers.get(pId);
+        if (sockets) {
+          sockets.forEach(sId => {
+            io.to(sId).emit('lobby_state', serialized);
+          });
+        }
+      });
+
+      broadcastLobbies();
+      return;
     }
 
     const res = engine.handlePlayerAction(userId, action, data);

@@ -27,7 +27,7 @@ export const FreeMoveIndicator: React.FC<FreeMoveIndicatorProps> = ({
   }, [isFreeMove]);
 
   return (
-    <div className="w-full max-w-sm mx-auto px-3 py-1 z-20 select-none font-sans flex-shrink-0">
+    <div className="w-full max-w-sm mx-auto px-3 py-1 z-20 font-sans flex-shrink-0">
       <AnimatePresence mode="wait">
         {isFreeMove ? (
           <motion.div

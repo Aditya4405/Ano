@@ -190,6 +190,7 @@ export const DEVELOPERS: Developer[] = [
     bio: "Junior developer at Ano contributing to real-time multiplayer party games and interactive social deduction mechanics.",
     contributions: [
       "Ink & Deception social deduction game loop, canvas stroke synchronization, and impostor mechanics",
+      "Ultimate Tic-Tac-Toe strategic 9x9 multi-board engine, authoritative sub-grid evaluation, and multiplayer lobby system",
       "Collaborative drawing workflow, role reveals, and real-time player voting systems"
     ],
     technologies: [
@@ -204,6 +205,10 @@ export const DEVELOPERS: Developer[] = [
       {
         gameId: "ink-deception",
         roleInGame: "Game Developer"
+      },
+      {
+        gameId: "ultimate-tic-tac-toe",
+        roleInGame: "Game Developer"
       }
     ],
     socials: {
@@ -217,6 +222,26 @@ export const DEVELOPERS: Developer[] = [
 
 // Centralized Games Built At Ano
 export const ABOUT_GAMES: AboutGame[] = [
+  {
+    id: "ultimate-tic-tac-toe",
+    name: "Ultimate Tic-Tac-Toe",
+    tagline: "Strategic 9x9 battleground of nested Tic-Tac-Toe boards",
+    description: "A nested 9x9 strategy game where each move determines which mini-board your opponent must play in next. Win 3 mini-boards in a row to win the match.",
+    icon: "📐",
+    color: "from-cyan-500 via-indigo-600 to-purple-800",
+    href: "/dashboard/games/ultimate-tic-tac-toe",
+    supportedModes: "BOTH",
+    status: "Live",
+    technologies: ["React", "TypeScript", "Socket.IO", "Zustand", "Tailwind CSS"],
+    featured: true,
+    developers: [
+      {
+        developerId: "aditya-prajapati",
+        role: "Game Developer",
+        contribution: "Nested grid win verification, active board routing logic, and multiplayer matchmaking."
+      }
+    ]
+  },
   {
     id: "chamber-clash",
     name: "Chamber Clash",

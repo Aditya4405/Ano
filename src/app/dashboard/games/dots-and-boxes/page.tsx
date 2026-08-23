@@ -2,6 +2,7 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users, Play, UserPlus, LogOut, Loader2, Check, X,
@@ -270,22 +271,30 @@ function DotsAndBoxesPageContent() {
     const dbLobbies = availableLobbies.filter(l => l.gameType === 'DOTS_AND_BOXES');
     return (
       <div className="flex flex-col h-screen bg-black text-white">
-        <div className="flex items-center justify-between p-4 bg-white/5 border-b border-white/10">
-          <div className="flex items-center gap-4">
-            <button onClick={() => router.push("/dashboard/games")} className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors">
+        <div className="flex items-center justify-between p-4 bg-white/5 border-b border-white/10 flex-shrink-0 z-30 backdrop-blur-md">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <Link href="/dashboard/games" className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer" title="Back to Arcade">
               <ArrowLeft className="w-5 h-5" />
-            </button>
-            <button onClick={() => router.push("/dashboard")} className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg">
-                <MessageSquare className="w-4 h-4 text-white" />
-              </div>
-              <span className="text-lg font-bold text-white">Ano</span>
-            </button>
-            <div className="ml-2 border-l border-white/20 pl-4">
-              <h1 className="text-xl font-bold text-white flex items-center gap-2">
-                ✏️ Dots and Boxes
+            </Link>
+            <Link href="/dashboard" className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
+              <img src="/ano-logo.png" alt="Ano Logo" className="w-8 h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
+              <span className="text-lg font-bold text-white tracking-wide">Ano</span>
+            </Link>
+            <div className="ml-1 sm:ml-2 border-l border-white/20 pl-3 sm:pl-4">
+              <h1 className="text-base sm:text-lg md:text-xl font-bold text-white flex items-center gap-2">
+                <span>✏️</span>
+                <span className="truncate">Dots and Boxes</span>
               </h1>
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setShowRulesModal(true)}
+              className="px-3.5 py-1.5 bg-white/5 border border-white/10 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors hover:bg-white/10 cursor-pointer"
+            >
+              <BookOpen className="w-4 h-4 text-blue-400" />
+              <span className="hidden sm:inline">Rules</span>
+            </button>
           </div>
         </div>
 
@@ -585,17 +594,16 @@ function DotsAndBoxesPageContent() {
       <div className="flex flex-col h-screen bg-black text-white select-none">
         <TurnIndicator isMyTurn={isMyTurn} />
         {/* Top Bar */}
-        <div className="flex items-center justify-between p-2 md:p-3 bg-white/5 border-b border-white/10 flex-shrink-0">
+        <div className="flex items-center justify-between p-3 md:p-4 bg-white/5 border-b border-white/10 flex-shrink-0 z-30 backdrop-blur-md">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push("/dashboard")} className="flex items-center gap-2 cursor-pointer group hover:opacity-80 transition-opacity">
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg">
-                <MessageSquare className="w-3.5 h-3.5 text-white" />
-              </div>
-              <span className="text-sm font-bold text-white">Ano</span>
-            </button>
+            <Link href="/dashboard" className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
+              <img src="/ano-logo.png" alt="Ano Logo" className="w-7 h-7 sm:w-8 sm:h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
+              <span className="text-base sm:text-lg font-bold text-white tracking-wide">Ano</span>
+            </Link>
             <div className="border-l border-white/20 pl-3">
-              <h1 className="text-sm font-bold text-white flex items-center gap-2">
-                ✏️ Dots and Boxes
+              <h1 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                <span>✏️</span>
+                <span className="truncate">Dots and Boxes</span>
               </h1>
             </div>
           </div>

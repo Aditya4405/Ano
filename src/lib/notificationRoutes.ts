@@ -59,6 +59,8 @@ export function resolveGameRoute(gameType?: string, gameId?: string): string {
     'brainrotstack': 'brainrot-stack',
     'number-hunt': 'number-hunt',
     'numberhunt': 'number-hunt',
+    'ultimate-tic-tac-toe': 'ultimate-tic-tac-toe',
+    'ultimatetictactoe': 'ultimate-tic-tac-toe',
     '2048': '2048',
     'minesweeper': 'minesweeper',
   };

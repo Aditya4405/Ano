@@ -508,9 +508,7 @@ export function ArrowMazeGameHub() {
         )}
 
         <Link href="/dashboard" className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform">
-            <MessageSquare className="w-4 h-4 text-white" />
-          </div>
+          <img src="/ano-logo.png" alt="Ano Logo" className="w-8 h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
           <span className="text-lg font-bold text-white tracking-wide">Ano</span>
         </Link>
 
