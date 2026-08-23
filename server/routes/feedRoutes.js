@@ -55,15 +55,16 @@ router.get('/user/:userId/stats', async (req, res) => {
   }
 });
 
-// Get feed posts (query: tab, page, limit, tag, userId)
+// Get feed posts (query: tab, cursor, page, limit, tag, userId)
 router.get('/', async (req, res) => {
   try {
     const tab = req.query.tab || 'latest';
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const cursor = req.query.cursor || undefined;
+    const page = req.query.page ? parseInt(req.query.page) : undefined;
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 50);
     const tag = req.query.tag || undefined;
     const userId = req.query.userId || undefined;
-    const result = await feedService.getPosts({ tab, page, limit, tag, userId });
+    const result = await feedService.getPosts({ tab, cursor, page, limit, tag, userId });
     res.json(result);
   } catch (err) {
     console.error('Error fetching feed:', err);

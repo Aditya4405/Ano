@@ -6,6 +6,7 @@ import { VoteButtons } from "./VoteButtons";
 import { FeedPost } from "@/store/useFeedStore";
 import { SafeMedia } from "../ui/SafeMedia";
 import { UserAvatar } from "../ui/UserAvatar";
+import { DeletePostModal } from "./DeletePostModal";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -27,14 +28,27 @@ interface PostCardProps {
   onVote: (postId: string, value: 1 | -1) => void;
   onSave: (postId: string) => void;
   onUnsave: (postId: string) => void;
-  onDelete?: (postId: string) => void;
+  onDelete?: (postId: string) => void | Promise<void | boolean>;
   isOwner?: boolean;
 }
 
 export function PostCard({ post, onVote, onSave, onUnsave, onDelete, isOwner }: PostCardProps) {
   const router = useRouter();
   const [showMenu, setShowMenu] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  const handleConfirmDelete = async () => {
+    if (!onDelete) return;
+    setIsDeleting(true);
+    try {
+      await onDelete(post.id);
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
 
   const handleShare = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -94,8 +108,8 @@ export function PostCard({ post, onVote, onSave, onUnsave, onDelete, isOwner }: 
 
         {/* Image */}
         {post.imageUrl && (
-          <div className="mb-3 rounded-lg overflow-hidden max-h-80">
-            <div className="relative w-full h-full">
+          <div className="mb-3 rounded-xl overflow-hidden bg-black/40 border border-white/10 flex items-center justify-center">
+            <div className="relative w-full flex items-center justify-center">
               {/* Image Scanning Overlay Badge */}
               {['PENDING', 'SCANNING'].includes(post.moderationStatus || '') && (
                 <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-black text-blue-400 border border-blue-500/20 flex items-center gap-1.5 z-10 shadow-lg select-none">
@@ -116,7 +130,8 @@ export function PostCard({ post, onVote, onSave, onUnsave, onDelete, isOwner }: 
                 goreScore={post.goreScore}
                 mediaId={`post_${post.id}`}
                 alt="Post image"
-                className="w-full h-full object-cover"
+                className="w-full flex items-center justify-center bg-black/20"
+                mediaClassName="w-full h-auto max-h-[600px] object-contain rounded-xl"
               />
             </div>
           </div>
@@ -200,10 +215,10 @@ export function PostCard({ post, onVote, onSave, onUnsave, onDelete, isOwner }: 
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onDelete(post.id);
                       setShowMenu(false);
+                      setShowDeleteConfirm(true);
                     }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-400 hover:bg-white/5 rounded-lg transition-colors"
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-400 hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     Delete
@@ -214,6 +229,13 @@ export function PostCard({ post, onVote, onSave, onUnsave, onDelete, isOwner }: 
           )}
         </div>
       </div>
+
+      <DeletePostModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleConfirmDelete}
+        isDeleting={isDeleting}
+      />
     </motion.div>
   );
 }

@@ -9,6 +9,7 @@ interface SafeMediaProps {
   type?: "image" | "gif" | "video";
   alt?: string;
   className?: string;
+  mediaClassName?: string;
   moderationStatus?: string;
   nudityScore?: number | null;
   goreScore?: number | null;
@@ -21,6 +22,7 @@ export function SafeMedia({
   type = "image",
   alt = "Media",
   className = "",
+  mediaClassName = "",
   moderationStatus,
   nudityScore,
   goreScore,
@@ -78,7 +80,8 @@ export function SafeMedia({
       {type === "video" ? (
         <video
           src={src}
-          className={`w-full h-full object-cover transition-all duration-700 ${
+          preload="metadata"
+          className={`${mediaClassName || "w-full h-full object-cover"} transition-all duration-700 ${
             isBlurredState ? "blur-3xl saturate-150 scale-110 pointer-events-none" : ""
           }`}
           controls={!isBlurredState}
@@ -88,7 +91,9 @@ export function SafeMedia({
         <img
           src={src}
           alt={alt}
-          className={`w-full h-full object-cover transition-all duration-700 ${
+          loading="lazy"
+          decoding="async"
+          className={`${mediaClassName || "w-full h-full object-cover"} transition-all duration-700 ${
             isBlurredState ? "blur-3xl saturate-150 scale-110 pointer-events-none" : ""
           }`}
           onClick={!isBlurredState ? onClick : undefined}

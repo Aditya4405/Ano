@@ -417,7 +417,7 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
     const ut3Lobbies = availableLobbies.filter(l => l.gameType === 'ULTIMATE_TIC_TAC_TOE');
 
     return (
-      <div className="flex flex-col h-screen bg-black text-white font-sans overflow-y-auto">
+      <div className="flex flex-col min-h-screen bg-black text-white font-sans overflow-x-hidden w-full max-w-full">
         <GameHeader
           onOpenRules={() => setShowRulesModal(true)}
         />
@@ -641,7 +641,7 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
     const isHumanTurn = localState.currentPlayer === 'X';
 
     return (
-      <div className="flex flex-col h-screen max-h-screen bg-black text-white font-sans overflow-hidden">
+      <div className="flex flex-col min-h-screen bg-black text-white font-sans overflow-x-hidden w-full max-w-full">
         <GameHeader
           onBack={() => setActiveMode('MODE_SELECT')}
           backTitle="Back to Menu"
@@ -714,7 +714,7 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
     const canStart = isHost && players.length === 2 && allReady;
 
     return (
-      <div className="flex flex-col h-screen bg-black text-white font-sans overflow-y-auto">
+      <div className="flex flex-col min-h-screen bg-black text-white font-sans overflow-x-hidden w-full max-w-full">
         <GameHeader
           onBack={handleBackToMenu}
           backTitle="Back to Menu"
@@ -963,7 +963,7 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
     const winnerPlayer = gameState.players.find(p => p.userId === gameState.winnerId);
 
     return (
-      <div className="flex flex-col h-screen max-h-screen bg-black text-white font-sans overflow-hidden">
+      <div className="flex flex-col min-h-screen bg-black text-white font-sans overflow-x-hidden w-full max-w-full">
         <GameHeader
           onBack={handleBackToMenu}
           backTitle="Back to Menu"

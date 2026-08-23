@@ -109,8 +109,8 @@ export function CreatePostModal({ isOpen, onClose }: CreatePostModalProps) {
 
         {/* Image preview */}
         {imageUrl && (
-          <div className="relative rounded-xl overflow-hidden">
-            <img src={imageUrl} alt="Preview" className="w-full max-h-60 object-cover" />
+          <div className="relative rounded-xl overflow-hidden bg-black/40 border border-white/10 flex items-center justify-center">
+            <img src={imageUrl} alt="Preview" className="w-full max-h-80 object-contain rounded-xl" />
             <button
               onClick={() => setImageUrl(null)}
               className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-full hover:bg-black/80 transition-colors"

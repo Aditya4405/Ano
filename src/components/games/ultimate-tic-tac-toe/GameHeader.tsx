@@ -48,50 +48,48 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
   const formattedTime = secondsLeft < 10 ? `0${secondsLeft}` : `${secondsLeft}`;
 
   return (
-    <header className="flex items-center justify-between p-4 bg-white/5 border-b border-white/10 flex-shrink-0 z-30 backdrop-blur-md font-sans">
-      <div className="flex items-center gap-3 sm:gap-4">
+    <header className="flex items-center justify-between px-2.5 py-2.5 sm:px-4 sm:py-3 bg-white/5 border-b border-white/10 flex-shrink-0 z-30 backdrop-blur-md font-sans w-full max-w-full">
+      <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
         {onBack ? (
           <button
             onClick={onBack}
-            className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer shrink-0"
             title={backTitle || "Back"}
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         ) : (
           <Link
             href="/dashboard/games"
-            className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer shrink-0"
             title="Back to Arcade"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
           </Link>
         )}
 
-        <Link href="/dashboard" className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
-          <img src="/ano-logo.png" alt="Ano Logo" className="w-8 h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
-          <span className="text-lg font-bold text-white tracking-wide">Ano</span>
+        <Link href="/dashboard" className="flex items-center gap-2 sm:gap-3 cursor-pointer group hover:opacity-80 transition-opacity shrink-0">
+          <img src="/ano-logo.png" alt="Ano Logo" className="w-7 h-7 sm:w-8 sm:h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
+          <span className="text-base sm:text-lg font-bold text-white tracking-wide">Ano</span>
         </Link>
 
-        <div className="ml-1 sm:ml-2 border-l border-white/20 pl-3 sm:pl-4">
-          <h1 className="text-base sm:text-lg md:text-xl font-bold text-white flex items-center gap-2">
-            <span>📐</span>
-            <span className="truncate">Ultimate Tic-Tac-Toe</span>
-          </h1>
+        <div className="hidden sm:flex items-center gap-1.5 ml-1 sm:ml-2 border-l border-white/20 pl-3 sm:pl-4 min-w-0">
+          <span className="text-base">📐</span>
+          <span className="text-sm sm:text-lg font-bold text-white tracking-wide truncate">Ultimate Tic-Tac-Toe</span>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
         {/* Turn Timer Badge */}
         {status === 'PLAYING' && (
           <div
-            className={`px-3 py-1 rounded-full text-xs font-black flex items-center gap-1.5 border transition-all ${
+            className={`px-2 sm:px-3 py-1 rounded-full text-[10px] sm:text-xs font-black flex items-center gap-1 sm:gap-1.5 border transition-all ${
               secondsLeft <= 10
                 ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse shadow-[0_0_12px_rgba(244,63,94,0.4)]'
                 : 'bg-white/5 text-cyan-300 border-cyan-500/30 shadow-sm'
             }`}
           >
-            <Clock className={`w-3.5 h-3.5 ${secondsLeft <= 10 ? 'text-rose-400' : 'text-cyan-400'}`} />
+            <Clock className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${secondsLeft <= 10 ? 'text-rose-400' : 'text-cyan-400'}`} />
             <span>00:{formattedTime}</span>
           </div>
         )}
@@ -100,20 +98,20 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
         {isSinglePlayer && onResetPractice && (
           <button
             onClick={onResetPractice}
-            className="p-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white transition-all cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white transition-all cursor-pointer shrink-0"
             title="Restart Practice Match"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
         )}
 
         {/* Rules Button */}
         <button
           onClick={onOpenRules}
-          className="px-3.5 py-1.5 bg-white/5 border border-white/10 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors hover:bg-white/10 cursor-pointer"
+          className="px-2.5 sm:px-3.5 py-1.5 bg-white/5 border border-white/10 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors hover:bg-white/10 cursor-pointer"
         >
-          <BookOpen className="w-4 h-4 text-cyan-400" />
-          <span className="hidden sm:inline">Rules</span>
+          <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-400 shrink-0" />
+          <span className="hidden xs:inline sm:inline">Rules</span>
         </button>
       </div>
     </header>
