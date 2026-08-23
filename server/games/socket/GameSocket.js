@@ -9,6 +9,7 @@ const ChamberClashEngine = require('../chamber-clash/ChamberClashEngine');
 const FlappyBirdEngine = require('../flappy-bird/FlappyBirdEngine');
 const PaperFallEngine = require('../paper-fall/PaperFallEngine');
 const ArrowMazeEngine = require('../arrow-maze/ArrowMazeEngine');
+const UltimateTicTacToeEngine = require('../ultimate-tic-tac-toe/UltimateTicTacToeEngine');
 const userService = require('../../services/userService');
 
 const ENGINE_MAP = {
@@ -22,6 +23,7 @@ const ENGINE_MAP = {
   'FLAPPY_BIRD': FlappyBirdEngine,
   'PAPER_FALL': PaperFallEngine,
   'ARROW_MAZE': ArrowMazeEngine,
+  'ULTIMATE_TIC_TAC_TOE': UltimateTicTacToeEngine,
 };
 
 const GAME_DISPLAY_NAMES = {
@@ -35,6 +37,7 @@ const GAME_DISPLAY_NAMES = {
   'FLAPPY_BIRD': 'Flappy Bird',
   'PAPER_FALL': 'PaperFall',
   'ARROW_MAZE': 'Arrow Maze',
+  'ULTIMATE_TIC_TAC_TOE': 'Ultimate Tic-Tac-Toe',
 };
 
 function registerGameSockets(io, socket, onlineUsers, activeGames) {

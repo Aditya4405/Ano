@@ -312,6 +312,7 @@ enum GameType {
   FLAPPY_BIRD
   PAPER_FALL
   ARROW_MAZE
+  ULTIMATE_TIC_TAC_TOE
 }
 
 enum GameStatus {
@@ -343,6 +344,7 @@ enum MoveType {
   INK_DECEPTION_SELECT_WORD
   INK_DECEPTION_GUESS
   CLICK_ARROW
+  ULTIMATE_TIC_TAC_TOE_MOVE
 }
 
 enum UserRole {

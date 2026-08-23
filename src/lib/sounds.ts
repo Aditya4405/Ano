@@ -309,6 +309,61 @@ class SoundEngine {
     setTimeout(() => this.playTone(1400, 'sine', 0.12, 0.04), 220);
   }
 
+  // ================================================
+  // Ultimate Tic-Tac-Toe Sounds
+  // ================================================
+
+  /** Tactile cell click */
+  playUt3CellClick() {
+    this.playTone(700, 'sine', 0.04, 0.1);
+  }
+
+  /** Sharp geometric X mark stroke */
+  playUt3MarkX() {
+    this.playTone(900, 'triangle', 0.05, 0.15);
+    setTimeout(() => this.playTone(1300, 'sine', 0.08, 0.12), 40);
+  }
+
+  /** Smooth harmonic O mark ring */
+  playUt3MarkO() {
+    this.playTone(520, 'sine', 0.08, 0.15);
+    setTimeout(() => this.playTone(780, 'sine', 0.12, 0.12), 50);
+  }
+
+  /** Mini-board victory 3-note arpeggio */
+  playUt3MiniWin() {
+    this.playTone(523.25, 'sine', 0.1, 0.15); // C5
+    setTimeout(() => this.playTone(659.25, 'sine', 0.1, 0.15), 90); // E5
+    setTimeout(() => this.playTone(783.99, 'sine', 0.2, 0.18), 180); // G5
+  }
+
+  /** Free move transition aura chime */
+  playUt3FreeMove() {
+    this.playTone(880, 'sine', 0.08, 0.1);
+    setTimeout(() => this.playTone(1108.73, 'sine', 0.12, 0.1), 80);
+    setTimeout(() => this.playTone(1318.51, 'sine', 0.18, 0.08), 160);
+  }
+
+  /** Soft invalid click warning thud */
+  playUt3Invalid() {
+    this.playTone(180, 'sawtooth', 0.12, 0.15);
+  }
+
+  /** Triumphant game victory fanfare */
+  playUt3GameWin() {
+    this.playTone(523.25, 'triangle', 0.15, 0.2); // C5
+    setTimeout(() => this.playTone(659.25, 'triangle', 0.15, 0.2), 120); // E5
+    setTimeout(() => this.playTone(783.99, 'triangle', 0.15, 0.2), 240); // G5
+    setTimeout(() => this.playTone(1046.50, 'sine', 0.4, 0.25), 360); // C6
+  }
+
+  /** Neutral descending draw chord */
+  playUt3GameDraw() {
+    this.playTone(440, 'triangle', 0.15, 0.15);
+    setTimeout(() => this.playTone(415.30, 'triangle', 0.15, 0.15), 150);
+    setTimeout(() => this.playTone(392.00, 'sine', 0.3, 0.15), 300);
+  }
+
   toggleMute() {
     this.isMuted = !this.isMuted;
     return this.isMuted;
