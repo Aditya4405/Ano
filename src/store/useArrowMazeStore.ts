@@ -307,7 +307,6 @@ export const useArrowMazeStore = create<ArrowMazeStoreState>()(
       targetUserId, gameType: 'ARROW_MAZE',
     };
     socket.emit('lobby_invite', payload);
-    socket.emit('game_invite', payload);
   },
 
   startMatch: (lobbyId, hostId) => {

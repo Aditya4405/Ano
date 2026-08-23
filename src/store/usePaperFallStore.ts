@@ -190,7 +190,6 @@ export const usePaperFallStore = create<PaperFallStoreState>((set, get) => ({
       targetUserId, gameType: 'PAPER_FALL',
     };
     socket.emit('lobby_invite', payload);
-    socket.emit('game_invite', payload);
   },
 
   startMatch: (lobbyId, hostId) => {
