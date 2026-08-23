@@ -176,10 +176,11 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
     const success = soloGame.makeMove(boardIndex, cellIndex);
     if (!success) return;
 
-    setLocalState({ ...soloGame.state });
+    const newState = { ...soloGame.state };
+    setLocalState(newState);
 
     // AI Turn Trigger
-    if (soloGame.state.status === 'PLAYING' && soloGame.state.currentPlayer === 'O') {
+    if (newState.status === 'PLAYING' && newState.currentPlayer === 'O') {
       setTimeout(() => {
         const aiMove = soloGame.computeAiMove();
         if (aiMove) {
@@ -359,6 +360,7 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
                       </div>
                       <button
                         onClick={() => {
+                          if (!userId) return;
                           setActiveMode('MULTIPLAYER');
                           joinLobby(l.id, userId, nickname || 'Player');
                         }}
@@ -514,6 +516,7 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
               {!isHost && (
                 <button
                   onClick={() => {
+                    if (!userId) return;
                     const me = players.find(p => p.userId === userId);
                     if (me) toggleReady(lobby.id, userId, !me.isReady);
                   }}
@@ -529,7 +532,10 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
 
               {isHost && (
                 <button
-                  onClick={() => startGame(lobby.id, userId)}
+                  onClick={() => {
+                    if (!userId) return;
+                    startGame(lobby.id, userId);
+                  }}
                   disabled={!canStart}
                   className={`flex-1 py-3 rounded-xl font-bold transition-all cursor-pointer ${
                     canStart
@@ -554,7 +560,10 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
                 <select
                   disabled={!isHost}
                   value={settings.turnTimer}
-                  onChange={e => updateSettings(lobby.id, userId, { turnTimer: Number(e.target.value) })}
+                  onChange={e => {
+                    if (!userId) return;
+                    updateSettings(lobby.id, userId, { turnTimer: Number(e.target.value) });
+                  }}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50 font-sans cursor-pointer"
                 >
                   <option value={15} className="bg-neutral-900">15 seconds</option>
@@ -569,7 +578,10 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
                 <select
                   disabled={!isHost}
                   value={settings.difficulty || 'MEDIUM'}
-                  onChange={e => updateSettings(lobby.id, userId, { difficulty: e.target.value as any })}
+                  onChange={e => {
+                    if (!userId) return;
+                    updateSettings(lobby.id, userId, { difficulty: e.target.value as AiDifficulty });
+                  }}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50 font-sans cursor-pointer"
                 >
                   <option value="EASY" className="bg-neutral-900">Easy (Casual)</option>
