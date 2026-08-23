@@ -54,6 +54,7 @@ export function ArrowMazeGameHub() {
   const searchParams = useSearchParams();
   const roomCodeParam = searchParams?.get('room');
 
+
   const userId = useUserStore((s) => s.id) || 'guest';
   const nickname = useUserStore((s) => s.nickname) || 'Player';
   const avatar = useUserStore((s) => s.avatar);
