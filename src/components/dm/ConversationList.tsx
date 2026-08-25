@@ -8,6 +8,7 @@ import { usePresenceStore } from "@/store/usePresenceStore";
 import { useRouter } from "next/navigation";
 import { MessageSquare } from "lucide-react";
 import { UserAvatar } from "@/components/ui/UserAvatar";
+import { UserPresence } from "@/components/ui/UserPresence";
 
 function formatTimestamp(timestamp: number): string {
   if (!timestamp) return "";
@@ -125,12 +126,7 @@ export function ConversationList() {
                 nickname={conv.otherUser.nickname}
                 size="w-9 h-9"
               />
-              {/* Online dot */}
-              <span
-                className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-zinc-900 ${
-                  online ? "bg-green-500" : "bg-gray-600"
-                }`}
-              />
+              <UserPresence userId={conv.otherUser.id} variant="avatar-badge" size="xs" />
             </div>
 
             {/* Info */}
@@ -151,11 +147,15 @@ export function ConversationList() {
                   Typing...
                 </p>
               ) : (
-                previewText && (
-                  <p className={`text-xs truncate mt-0.5 ${unread > 0 ? "text-white font-semibold" : "text-gray-400"}`}>
-                    {previewText}
-                  </p>
-                )
+                <div className="flex items-center gap-1 mt-0.5">
+                  {previewText ? (
+                    <p className={`text-xs truncate ${unread > 0 ? "text-white font-semibold" : "text-gray-400"}`}>
+                      {previewText}
+                    </p>
+                  ) : (
+                    <UserPresence userId={conv.otherUser.id} variant="inline" />
+                  )}
+                </div>
               )}
             </div>
 

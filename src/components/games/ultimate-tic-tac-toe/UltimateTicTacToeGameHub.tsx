@@ -27,6 +27,8 @@ import { PlayerStatus } from './PlayerStatus';
 import { FreeMoveIndicator } from './FreeMoveIndicator';
 import { GameResultModal } from './GameResultModal';
 import { RulesModal } from './RulesModal';
+import { UserPresence } from '@/components/ui/UserPresence';
+import { useGamePresence } from '@/hooks/useGamePresence';
 
 export const UltimateTicTacToeGameHub: React.FC = () => {
   const router = useRouter();
@@ -58,6 +60,9 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
 
   // Mode Selection: 'MODE_SELECT' | 'SOLO' | 'MULTIPLAYER'
   const [activeMode, setActiveMode] = useState<'MODE_SELECT' | 'SOLO' | 'MULTIPLAYER'>('MODE_SELECT');
+
+  // Track active game presence (solo AI or multiplayer match)
+  useGamePresence('ULTIMATE_TIC_TAC_TOE', activeMode === 'SOLO' || Boolean(gameState), lobby?.id || gameState?.gameId);
   const [selectedDifficulty, setSelectedDifficulty] = useState<AiDifficulty>('MEDIUM');
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -371,13 +376,11 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
                               (u.nickname || '?')[0].toUpperCase()
                             )}
                           </div>
-                          <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-neutral-900 bg-emerald-400" />
+                          <UserPresence userId={u.id} variant="avatar-badge" size="xs" />
                         </div>
                         <div>
                           <span className="font-semibold text-sm text-white block leading-tight">{u.nickname}</span>
-                          <span className="text-[10px] text-gray-400">
-                            {isFriend ? 'Friend · Online' : 'Online'}
-                          </span>
+                          <UserPresence userId={u.id} variant="inline" />
                         </div>
                       </div>
 
@@ -583,7 +586,6 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
                     </div>
                   ) : (
                     onlineUsers.map(u => {
-                      const isFriend = friendsList.some(f => f.id === u.id);
                       const status = getInviteStatus(u.id);
                       return (
                         <div
@@ -599,11 +601,11 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
                                   (u.nickname || '?')[0].toUpperCase()
                                 )}
                               </div>
-                              <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border-2 border-neutral-900 bg-emerald-400" />
+                              <UserPresence userId={u.id} variant="avatar-badge" size="xs" />
                             </div>
                             <div>
                               <span className="font-semibold text-xs text-white block leading-tight">{u.nickname}</span>
-                              <span className="text-[9px] text-gray-400">{isFriend ? 'Friend · Online' : 'Online'}</span>
+                              <UserPresence userId={u.id} variant="inline" />
                             </div>
                           </div>
 

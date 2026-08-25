@@ -18,6 +18,7 @@ import { socketService } from "@/lib/socket";
 import { sounds } from "@/lib/sounds";
 import { getItemAnimConfig } from "@/components/games/chamber-clash/animationConfigs";
 import { PlayerHealthIndicator } from "@/components/games/chamber-clash/PlayerHealthIndicator";
+import { useGamePresence } from "@/hooks/useGamePresence";
 
 const ChamberClash3D = dynamic(() => import("@/components/games/chamber-clash/ChamberClash3D").then((m) => m.ChamberClash3D), { ssr: false });
 
@@ -54,6 +55,9 @@ function ChamberClashGameContent() {
     shootTarget, useItem, resolvePendingItem,
     setupListeners, dequeueEvent, setAnimating, addLogEntry, clearState, reportAssetsReady
   } = useChamberClashStore();
+
+  // Track active game presence when match is running
+  useGamePresence('CHAMBER_CLASH', Boolean(gameState), gameState?.gameId);
 
   // ─── Local UI State ───
   const [onlineUsers, setOnlineUsers] = useState<any[]>([]);

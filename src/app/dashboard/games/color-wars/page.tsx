@@ -18,6 +18,7 @@ import { MessageInput } from "@/components/room/MessageInput";
 import { TurnIndicator } from "@/components/games/TurnIndicator";
 import { useExitWarning } from "@/hooks/useExitWarning";
 import { useInviteCooldown } from "@/hooks/useInviteCooldown";
+import { useGamePresence } from "@/hooks/useGamePresence";
 
 // Map server color names to Tailwind design assets and hex codes
 interface ColorAsset {
@@ -111,6 +112,9 @@ function ColorWarsPageContent() {
     invitePlayer, updateSettings, startGame, selectTile,
     clearState, setupListeners, fetchLobbies
   } = useColorWarsStore();
+
+  // Track active game presence when match is running
+  useGamePresence('COLOR_WARS', Boolean(gameState), gameState?.gameId);
 
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showChatSidebar, setShowChatSidebar] = useState(false);

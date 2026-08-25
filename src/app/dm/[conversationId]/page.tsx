@@ -12,6 +12,7 @@ import { DMChatArea } from "@/components/dm/DMChatArea";
 import { DMMessageInput } from "@/components/dm/DMMessageInput";
 import { UserProfileCard } from "@/components/profile/UserProfileCard";
 import { UserAvatar } from "@/components/ui/UserAvatar";
+import { UserPresence } from "@/components/ui/UserPresence";
 import { DropZone } from "@/components/room/DropZone";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { Loader2, ArrowLeft } from "lucide-react";
@@ -156,8 +157,6 @@ export default function DMPage() {
       ? conversation.participantB
       : conversation.participantA;
 
-  const online = isOnline(otherUser.id);
-
   return (
     <div className="flex h-screen max-h-screen">
       <AppSidebar />
@@ -182,18 +181,12 @@ export default function DMPage() {
               nickname={otherUser.nickname}
               size="w-9 h-9"
             />
-            <span
-              className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-zinc-900 ${
-                online ? "bg-green-500" : "bg-gray-600"
-              }`}
-            />
+            <UserPresence userId={otherUser.id} variant="avatar-badge" size="sm" />
           </div>
 
-          <div>
-            <h2 className="text-white font-semibold">{otherUser.nickname}</h2>
-            <p className={`text-xs ${online ? "text-green-400" : "text-gray-500"}`}>
-              {online ? "Online" : "Offline"}
-            </p>
+          <div className="min-w-0">
+            <h2 className="text-white font-semibold text-sm sm:text-base leading-tight truncate">{otherUser.nickname}</h2>
+            <UserPresence userId={otherUser.id} variant="full" />
           </div>
         </motion.div>
 

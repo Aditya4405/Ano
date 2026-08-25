@@ -6,6 +6,7 @@ import { GlassCard } from "@/components/layout/GlassCard";
 import { Users, Circle, ShieldAlert } from "lucide-react";
 import { motion } from "framer-motion";
 import { UserAvatar } from "@/components/ui/UserAvatar";
+import { UserPresence } from "@/components/ui/UserPresence";
 import { useUserStore } from "@/store/useUserStore";
 import { useDMStore } from "@/store/useDMStore";
 import { useRouter } from "next/navigation";
@@ -55,6 +56,7 @@ export function OnlineUsersList() {
       if (socket) {
         socket.on('user_online', fetchOnlineUsers);
         socket.on('user_offline', fetchOnlineUsers);
+        socket.on('presence_updated', fetchOnlineUsers);
       }
     });
 
@@ -64,6 +66,7 @@ export function OnlineUsersList() {
         if (socket) {
           socket.off('user_online', fetchOnlineUsers);
           socket.off('user_offline', fetchOnlineUsers);
+          socket.off('presence_updated', fetchOnlineUsers);
         }
       });
     };
@@ -131,7 +134,7 @@ export function OnlineUsersList() {
                   nickname={user.nickname}
                   size="w-10 h-10"
                 />
-                <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-[#12121A] rounded-full" />
+                <UserPresence userId={user.id} variant="avatar-badge" size="sm" />
               </div>
               <div className="flex flex-col flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1 w-full">
@@ -147,9 +150,9 @@ export function OnlineUsersList() {
                     <ShieldAlert className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                {user.bio && (
-                  <span className="text-xs text-gray-400 truncate">{user.bio}</span>
-                )}
+                <div className="mt-0.5">
+                  <UserPresence userId={user.id} variant="inline" />
+                </div>
               </div>
             </motion.div>
           ))}

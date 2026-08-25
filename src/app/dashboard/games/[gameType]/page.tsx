@@ -8,6 +8,7 @@ import { useUserStore } from "@/store/useUserStore";
 import { ArrowLeft, Loader2, MessageSquare, Trophy, Medal, ChevronUp, X } from "lucide-react";
 import { getGameDefinition } from "@/config/gamesRegistry";
 import { GlassCard } from "@/components/layout/GlassCard";
+import { useGamePresence } from "@/hooks/useGamePresence";
 
 export default function SinglePlayerGamePage() {
   const params = useParams();
@@ -20,6 +21,9 @@ export default function SinglePlayerGamePage() {
   const [showMobileLeaderboard, setShowMobileLeaderboard] = useState(false);
 
   const gameDef = getGameDefinition(gameType);
+
+  // Set real-time single-player game presence
+  useGamePresence(gameType, true);
 
   const fetchLeaderboard = () => {
     fetch(`${API_URL}/api/games/leaderboard/${gameType}`)

@@ -18,6 +18,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { TurnIndicator } from "@/components/games/TurnIndicator";
 import { useExitWarning } from "@/hooks/useExitWarning";
 import { useInviteCooldown } from "@/hooks/useInviteCooldown";
+import { useGamePresence } from "@/hooks/useGamePresence";
 
 // Components
 import { ScribbleCanvas } from "@/components/games/scribble/ScribbleCanvas";
@@ -45,11 +46,18 @@ function ScribbleGameContent() {
     kickPlayer,
     leaveLobby,
     startGame,
+    selectWord,
+    sendGuess,
+    playAgain,
+    clearState,
     setupListeners,
     updateSettings,
     invitePlayer,
     fetchLobbies
   } = useScribbleStore();
+
+  // Track active game presence when match is running
+  useGamePresence('SCRIBBLE', Boolean(gameState), gameState?.gameId);
 
   const { currentRoomId } = useRoomConnectionStore();
 

@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useInviteCooldown } from '@/hooks/useInviteCooldown';
+import { useGamePresence } from '@/hooks/useGamePresence';
 
 type ActiveView = 'MENU' | 'SINGLEPLAYER' | 'MULTIPLAYER_LOBBY' | 'MULTIPLAYER_MATCH' | 'MATCH_RESULTS';
 
@@ -72,6 +73,9 @@ export function ArrowMazeGameHub() {
   } = useArrowMazeStore();
 
   const [activeView, setActiveView] = useState<ActiveView>('MENU');
+
+  // Track active game presence (both solo & multiplayer match)
+  useGamePresence('ARROW_MAZE', activeView === 'SINGLEPLAYER' || activeView === 'MULTIPLAYER_MATCH', roomState?.id);
   const [gameStatus, setGameStatus] = useState<'idle' | 'playing' | 'paused' | 'levelComplete' | 'over'>('idle');
   const [currentLevel, setCurrentLevel] = useState(1);
   const [selectedDifficulty, setSelectedDifficulty] = useState<GameDifficulty>('EASY');

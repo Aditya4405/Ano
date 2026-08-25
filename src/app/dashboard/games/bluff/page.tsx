@@ -20,6 +20,8 @@ import { socketService } from "@/lib/socket";
 import { TurnIndicator } from "@/components/games/TurnIndicator";
 import { useExitWarning } from "@/hooks/useExitWarning";
 import { useInviteCooldown } from "@/hooks/useInviteCooldown";
+import { UserPresence } from "@/components/ui/UserPresence";
+import { useGamePresence } from "@/hooks/useGamePresence";
 
 const DECLARED_RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace'];
 
@@ -62,6 +64,9 @@ function BluffGamePageContent() {
     setupListeners,
     fetchLobbies
   } = useBluffStore();
+
+  // Track active game presence when match is running
+  useGamePresence('BLUFF', Boolean(gameState), gameState?.gameId);
 
   const [selectedCards, setSelectedCards] = useState<string[]>([]);
   const [declaredRank, setDeclaredRank] = useState<string>("Ace");
@@ -434,13 +439,11 @@ function BluffGamePageContent() {
                                 <div className={`w-8 h-8 bg-gradient-to-br ${isFriend ? 'from-purple-500 to-indigo-600' : 'from-blue-500 to-cyan-600'} rounded-lg flex items-center justify-center text-xs font-bold`}>
                                   {u.nickname?.[0]?.toUpperCase() || '?'}
                                 </div>
-                                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-neutral-900 bg-emerald-400" />
+                                <UserPresence userId={u.id} variant="avatar-badge" size="xs" />
                               </div>
                               <div>
                                 <span className="font-medium block leading-tight">{u.nickname}</span>
-                                <span className="text-[10px] text-gray-500">
-                                  {isFriend ? 'Friend · Online' : 'Online'}
-                                </span>
+                                <UserPresence userId={u.id} variant="inline" />
                               </div>
                             </div>
                             <button

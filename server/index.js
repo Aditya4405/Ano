@@ -23,6 +23,7 @@ const flappyRoutes = require('./routes/flappyRoutes');
 const notificationService = require('./services/notificationService');
 const voiceService = require('./services/voiceService');
 const ipService = require('./services/ipService');
+const presenceService = require('./services/presenceService');
 const prisma = require('./db');
 
 // Start cleanup service
@@ -61,6 +62,9 @@ const rooms = new Map();        // roomId -> Set of { socketId, userId, nickname
 const userToRoom = new Map();   // socketId -> roomId
 const onlineUsers = new Map();  // userId -> Set<socketId> (global presence)
 const socketToUser = new Map(); // socketId -> { userId, nickname }
+
+// Initialize presence service
+presenceService.init(io, onlineUsers);
 
 // Now register admin routes with access to in-memory Maps
 app.use('/api/admin', createAdminRoutes(onlineUsers, rooms, activeGames));
@@ -209,7 +213,15 @@ app.get('/api/users/online', async (req, res) => {
       where: { id: { in: onlineIds } },
       select: { id: true, nickname: true, avatar: true, bio: true, presenceStatus: true }
     });
-    res.json(users);
+    const enriched = users.map(u => {
+      const pres = presenceService.getPresence(u.id);
+      return {
+        ...u,
+        presence: pres,
+        isOnline: pres ? pres.status !== 'OFFLINE' : true,
+      };
+    });
+    res.json(enriched);
   } catch (err) {
     console.error('Error fetching online users:', err);
     res.status(500).json({ error: 'Failed to fetch online users' });
@@ -560,15 +572,34 @@ io.on('connection', (socket) => {
     onlineUsers.get(userId).add(socket.id);
     socket.join(userId);
 
-    // Broadcast that this user is online
+    // Register presence in presenceService
+    await presenceService.setOnline(userId, socket.id);
+
+    // Broadcast that this user is online (legacy compatibility)
     socket.broadcast.emit('user_online', { userId });
 
-    // Send current online user list to the connecting user
+    // Send current online user list & initial presences to the connecting user
     const onlineIds = Array.from(onlineUsers.keys());
     socket.emit('online_users', onlineIds);
+    socket.emit('initial_presence', presenceService.getAllPresences());
 
     // Broadcast live stats update
     broadcastLiveStats();
+  });
+
+  // Standalone / single-player game presence events
+  socket.on('game_enter', async ({ gameType, gameId, userId }) => {
+    const userData = socketToUser.get(socket.id);
+    const uid = userData?.userId || userId;
+    if (!uid) return;
+    await presenceService.setPlaying(uid, socket.id, { gameId, gameType });
+  });
+
+  socket.on('game_leave', async ({ gameType, gameId, userId }) => {
+    const userData = socketToUser.get(socket.id);
+    const uid = userData?.userId || userId;
+    if (!uid) return;
+    await presenceService.clearPlaying(uid, socket.id, gameId);
   });
 
   // ========================
@@ -1009,7 +1040,7 @@ io.on('connection', (socket) => {
     // Handle room leave
     await handleLeave();
 
-    // Handle global presence
+    // Handle global presence & game sockets
     const userData = socketToUser.get(socket.id);
     if (userData) {
       const { userId } = userData;
@@ -1035,6 +1066,7 @@ io.on('connection', (socket) => {
         }
       }
 
+      await presenceService.handleSocketDisconnect(userId, socket.id);
       socketToUser.delete(socket.id);
     }
   };

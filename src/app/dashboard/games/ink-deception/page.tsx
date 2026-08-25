@@ -17,6 +17,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { TurnIndicator } from "@/components/games/TurnIndicator";
 import { useExitWarning } from "@/hooks/useExitWarning";
 import { useInviteCooldown } from "@/hooks/useInviteCooldown";
+import { useGamePresence } from "@/hooks/useGamePresence";
 
 // Ink & Deception components
 
@@ -39,19 +40,26 @@ function InkDeceptionContent() {
   const {
     lobby,
     gameState,
+    error,
     availableLobbies,
     createLobby,
     joinLobby,
     toggleReady,
+    kickPlayer,
     leaveLobby,
     updateSettings,
     startGame,
     submitStroke,
+    castVote,
+    submitWordGuess,
     playAgain,
     setupListeners,
     fetchLobbies,
     invitePlayer
   } = useInkDeceptionStore();
+
+  // Track active game presence when match is running
+  useGamePresence('INK_DECEPTION', Boolean(gameState), gameState?.gameId);
 
   const [inviteCopied, setInviteCopied] = useState(false);
   const [isMuted, setIsMuted] = useState(false);

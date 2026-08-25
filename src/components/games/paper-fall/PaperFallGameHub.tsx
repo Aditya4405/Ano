@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useInviteCooldown } from '@/hooks/useInviteCooldown';
+import { useGamePresence } from '@/hooks/useGamePresence';
 
 type ActiveView = 'MENU' | 'SINGLEPLAYER' | 'MULTIPLAYER_LOBBY' | 'MULTIPLAYER_MATCH' | 'MATCH_RESULTS';
 
@@ -42,6 +43,9 @@ export function PaperFallGameHub() {
   } = usePaperFallStore();
 
   const [activeView, setActiveView] = useState<ActiveView>('MENU');
+
+  // Track active game presence (both solo & multiplayer match)
+  useGamePresence('PAPER_FALL', activeView === 'SINGLEPLAYER' || activeView === 'MULTIPLAYER_MATCH', roomState?.id);
   const [gameStatus, setGameStatus] = useState<'idle' | 'playing' | 'paused' | 'over'>('idle');
   const [currentScore, setCurrentScore] = useState(0);
   const [currentWpm, setCurrentWpm] = useState(0);

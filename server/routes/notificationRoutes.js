@@ -60,11 +60,21 @@ router.post('/friendships', async (req, res) => {
   }
 });
 
+const presenceService = require('../services/presenceService');
+
 // Get friends for a user
 router.get('/friendships/:userId', async (req, res) => {
   try {
     const friends = await notificationService.getFriends(req.params.userId);
-    res.json(friends);
+    const enriched = friends.map(f => {
+      const pres = presenceService.getPresence(f.id);
+      return {
+        ...f,
+        presence: pres,
+        isOnline: pres ? pres.status !== 'OFFLINE' : Boolean(f.isOnline),
+      };
+    });
+    res.json(enriched);
   } catch (err) {
     console.error('Error fetching friends:', err);
     res.status(500).json({ error: 'Failed to fetch friends' });

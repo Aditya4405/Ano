@@ -36,6 +36,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import Link from 'next/link';
+import { useGamePresence } from '@/hooks/useGamePresence';
 
 export function FlappyGameHub() {
   const searchParams = useSearchParams();
@@ -88,6 +89,9 @@ export function FlappyGameHub() {
 
   // Active View Tab: 'MENU' | 'SINGLEPLAYER' | 'MULTIPLAYER_LOBBY' | 'MULTIPLAYER_MATCH'
   const [activeView, setActiveView] = useState<'MENU' | 'SINGLEPLAYER' | 'MULTIPLAYER_LOBBY' | 'MULTIPLAYER_MATCH'>('MENU');
+
+  // Track active game presence (both solo & multiplayer match)
+  useGamePresence('FLAPPY_BIRD', activeView === 'SINGLEPLAYER' || activeView === 'MULTIPLAYER_MATCH', roomState?.id);
 
   // Use refs to avoid recreating FlappyCore when activeView or roomState changes
   const activeViewRef = useRef(activeView);

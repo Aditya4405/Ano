@@ -19,6 +19,7 @@ import { socketService } from "@/lib/socket";
 import { TurnIndicator } from "@/components/games/TurnIndicator";
 import { useExitWarning } from "@/hooks/useExitWarning";
 import { useInviteCooldown } from "@/hooks/useInviteCooldown";
+import { useGamePresence } from "@/hooks/useGamePresence";
 
 // Unique colors for each player (up to 8)
 const PLAYER_COLORS = [
@@ -64,6 +65,9 @@ function DotsAndBoxesPageContent() {
     setupListeners,
     fetchLobbies
   } = useDotsAndBoxesStore();
+
+  // Track active game presence when match is running
+  useGamePresence('DOTS_AND_BOXES', Boolean(gameState), gameState?.gameId);
 
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showChatSidebar, setShowChatSidebar] = useState(false);

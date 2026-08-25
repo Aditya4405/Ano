@@ -9,6 +9,7 @@ import { Camera, Edit3, Check, X, MessageSquare, Calendar } from "lucide-react";
 import { uploadProfilePicture, validateImageFile } from "@/lib/upload";
 import { motion } from "framer-motion";
 import { UserAvatar } from "@/components/ui/UserAvatar";
+import { UserPresence } from "@/components/ui/UserPresence";
 
 interface UserProfile {
   id: string;
@@ -28,7 +29,6 @@ export function UserProfileCard({ userId, onStartDM }: UserProfileCardProps) {
   const router = useRouter();
   const myUserId = useUserStore((s) => s.id);
   const updateProfile = useUserStore((s) => s.updateProfile);
-  const isOnline = usePresenceStore((s) => s.isOnline);
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -37,7 +37,6 @@ export function UserProfileCard({ userId, onStartDM }: UserProfileCardProps) {
   const [uploading, setUploading] = useState(false);
 
   const isOwn = myUserId === userId;
-  const online = isOnline(userId);
 
   useEffect(() => {
     const load = async () => {
@@ -134,12 +133,8 @@ export function UserProfileCard({ userId, onStartDM }: UserProfileCardProps) {
           className="ring-2 ring-white/10"
         />
 
-        {/* Online indicator */}
-        <span
-          className={`absolute bottom-1 right-1 w-4 h-4 rounded-full border-2 border-zinc-900 ${
-            online ? "bg-green-500" : "bg-gray-600"
-          }`}
-        />
+        {/* Online / Playing indicator */}
+        <UserPresence userId={userId} variant="avatar-badge" size="lg" />
 
         {/* Upload overlay */}
         {isOwn && (
@@ -163,14 +158,8 @@ export function UserProfileCard({ userId, onStartDM }: UserProfileCardProps) {
       {/* Nickname */}
       <h3 className="text-lg font-semibold text-white">{profile.nickname}</h3>
 
-      {/* Online status */}
-      <span className={`text-xs px-2 py-1 rounded-full ${
-        online
-          ? "bg-green-500/20 text-green-400 border border-green-500/30"
-          : "bg-gray-500/20 text-gray-400 border border-gray-500/30"
-      }`}>
-        {online ? "🟢 Online" : "⚫ Offline"}
-      </span>
+      {/* Presence badge */}
+      <UserPresence userId={userId} variant="badge" />
 
       {/* Bio */}
       <div className="w-full">

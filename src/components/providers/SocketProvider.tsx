@@ -35,6 +35,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   const setUserOnline = usePresenceStore((s) => s.setUserOnline);
   const setUserOffline = usePresenceStore((s) => s.setUserOffline);
   const setOnlineUsers = usePresenceStore((s) => s.setOnlineUsers);
+  const setPresence = usePresenceStore((s) => s.setPresence);
+  const setBulkPresences = usePresenceStore((s) => s.setBulkPresences);
 
   useEffect(() => {
     if (!userId || !nickname) return;
@@ -61,6 +63,18 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
     const onOnlineUsers = (userIds: string[]) => {
       setOnlineUsers(userIds);
+    };
+
+    const onInitialPresence = (presences: Record<string, any>) => {
+      if (presences && typeof presences === "object") {
+        setBulkPresences(presences);
+      }
+    };
+
+    const onPresenceUpdated = (presence: any) => {
+      if (presence && presence.userId) {
+        setPresence(presence);
+      }
     };
 
     const onDMNotification = ({ conversationId, message }: { conversationId: string; message: DMMessage }) => {
@@ -138,6 +152,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     socket.on("user_online", onUserOnline);
     socket.on("user_offline", onUserOffline);
     socket.on("online_users", onOnlineUsers);
+    socket.on("initial_presence", onInitialPresence);
+    socket.on("presence_updated", onPresenceUpdated);
     socket.on("dm_notification", onDMNotification);
     socket.on("dm_seen", onDMSeen);
     socket.on("new_notification", onNewNotification);
@@ -156,12 +172,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       socket.off("user_online", onUserOnline);
       socket.off("user_offline", onUserOffline);
       socket.off("online_users", onOnlineUsers);
+      socket.off("initial_presence", onInitialPresence);
+      socket.off("presence_updated", onPresenceUpdated);
       socket.off("dm_notification", onDMNotification);
       socket.off("dm_seen", onDMSeen);
       socket.off("new_notification", onNewNotification);
       socket.off("connect", registerUser);
     };
-  }, [userId, nickname, setUserOnline, setUserOffline, setOnlineUsers, addToast, pathname, router]);
+  }, [userId, nickname, setUserOnline, setUserOffline, setOnlineUsers, setPresence, setBulkPresences, addToast, pathname, router]);
 
   return <>{children}</>;
 }
