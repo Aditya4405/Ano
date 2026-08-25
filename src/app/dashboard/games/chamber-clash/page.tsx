@@ -19,6 +19,7 @@ import { sounds } from "@/lib/sounds";
 import { getItemAnimConfig } from "@/components/games/chamber-clash/animationConfigs";
 import { PlayerHealthIndicator } from "@/components/games/chamber-clash/PlayerHealthIndicator";
 import { useGamePresence } from "@/hooks/useGamePresence";
+import GameChatDrawer from "@/components/games/common/GameChatDrawer";
 
 const ChamberClash3D = dynamic(() => import("@/components/games/chamber-clash/ChamberClash3D").then((m) => m.ChamberClash3D), { ssr: false });
 
@@ -1425,6 +1426,13 @@ function ChamberClashGameContent() {
           </div>
         </div>
 
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={lobby.id}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar: useUserStore.getState().avatar }}
+          title="Lobby Chat"
+        />
+
         {/* Invite Modal */}
         {renderInviteModal()}
         {renderRulesModal()}
@@ -2129,6 +2137,13 @@ function ChamberClashGameContent() {
             .cc-table-wrapper { transform: scale(0.8); }
           }
         `}</style>
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={gameState.gameId}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar: useUserStore.getState().avatar }}
+          title="Match Chat"
+        />
+
         {renderRulesModal()}
       </div>
     );

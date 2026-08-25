@@ -22,6 +22,8 @@ import { API_URL } from "@/lib/config";
 import { useExitWarning } from "@/hooks/useExitWarning";
 import { useInviteCooldown } from "@/hooks/useInviteCooldown";
 import { useGamePresence } from "@/hooks/useGamePresence";
+import GameChatDrawer from "@/components/games/common/GameChatDrawer";
+import { useGameChatStore } from "@/store/useGameChatStore";
 
 // Unique colors for each player (up to 8)
 const PLAYER_COLORS = [
@@ -71,9 +73,10 @@ function MemoryMatchPageContent() {
   const searchParams = useSearchParams();
   const gameIdParam = searchParams.get("gameId");
 
-  const { id: userId, nickname } = useUserStore();
+  const { id: userId, nickname, avatar } = useUserStore();
   const { currentRoomId } = useRoomConnectionStore();
   const { connectedChannelId, isMuted, toggleMute, disconnect: disconnectVoice } = useVoiceStore();
+  const { unreadCount: unreadChatCount, toggleChat } = useGameChatStore();
 
   const {
     lobby,
@@ -505,6 +508,19 @@ function MemoryMatchPageContent() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={toggleChat}
+              className="px-3 py-1.5 bg-white/5 border border-white/10 hover:border-violet-500/50 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors hover:bg-white/10 cursor-pointer relative"
+              title="Lobby Chat"
+            >
+              <MessageSquare className="w-4 h-4 text-violet-400" />
+              <span className="hidden sm:inline">Chat</span>
+              {unreadChatCount > 0 && (
+                <span className="px-1.5 py-0.2 text-[9px] font-black bg-rose-500 text-white rounded-full animate-bounce">
+                  {unreadChatCount}
+                </span>
+              )}
+            </button>
             <button 
               onClick={() => setShowRulesModal(true)}
               className="px-3 py-1.5 bg-white/5 border border-white/10 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors hover:bg-white/10 cursor-pointer"
@@ -746,6 +762,11 @@ function MemoryMatchPageContent() {
             </div>
           </div>
         </div>
+        <GameChatDrawer
+          gameId={lobby.id}
+          currentUser={{ id: userId, nickname: nickname || 'Player', avatar }}
+          title="Lobby Chat"
+        />
         {rulesModal}
       </div>
     );
@@ -1035,9 +1056,22 @@ function MemoryMatchPageContent() {
         {/* Bottom Bar */}
         <div className="flex items-center justify-between p-2 md:p-3 bg-white/5 border-t border-white/10 flex-shrink-0">
           <div className="flex items-center gap-2">
+            <button
+              onClick={toggleChat}
+              className="px-3 py-1.5 rounded-full bg-violet-600/30 hover:bg-violet-600/50 border border-violet-500/40 text-violet-200 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-semibold relative"
+              title="Open Match Chat"
+            >
+              <MessageSquare className="w-4 h-4 text-violet-400" />
+              <span>Chat</span>
+              {unreadChatCount > 0 && (
+                <span className="px-1.5 py-0.2 text-[9px] font-black bg-rose-500 text-white rounded-full animate-bounce">
+                  {unreadChatCount}
+                </span>
+              )}
+            </button>
             {currentRoomId && (
-              <button onClick={() => setShowChatSidebar(!showChatSidebar)} className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors">
-                <MessageSquare className="w-4 h-4" />
+              <button onClick={() => setShowChatSidebar(!showChatSidebar)} className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors" title="Room Chat">
+                <MessageSquare className="w-4 h-4 text-gray-400" />
               </button>
             )}
             {connectedChannelId && (
@@ -1055,6 +1089,13 @@ function MemoryMatchPageContent() {
             <LogOut className="w-4 h-4" /> Leave Game
           </button>
         </div>
+
+        {/* In-Game Multiplayer Chat Drawer */}
+        <GameChatDrawer
+          gameId={gameState.gameId}
+          currentUser={{ id: userId, nickname: nickname || 'Player', avatar }}
+          title="Match Chat"
+        />
 
         {/* Error Toast */}
         <AnimatePresence>

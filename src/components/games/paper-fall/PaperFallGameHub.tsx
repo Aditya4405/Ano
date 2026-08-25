@@ -19,6 +19,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { useInviteCooldown } from '@/hooks/useInviteCooldown';
 import { useGamePresence } from '@/hooks/useGamePresence';
+import GameChatDrawer from '@/components/games/common/GameChatDrawer';
 
 type ActiveView = 'MENU' | 'SINGLEPLAYER' | 'MULTIPLAYER_LOBBY' | 'MULTIPLAYER_MATCH' | 'MATCH_RESULTS';
 
@@ -314,6 +315,14 @@ export function PaperFallGameHub() {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (activeView !== 'SINGLEPLAYER' && activeView !== 'MULTIPLAYER_MATCH') return;
+
+      // Do not intercept keystrokes if the user is typing in an input field (e.g. ChatDrawer)
+      const target = e.target as HTMLElement | null;
+      const activeEl = typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
+      const isInputFocused =
+        (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) ||
+        (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable));
+      if (isInputFocused) return;
 
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -1966,6 +1975,15 @@ export function PaperFallGameHub() {
       {activeView === 'MULTIPLAYER_LOBBY' && renderMultiplayerLobby()}
       {activeView === 'MULTIPLAYER_MATCH' && renderMultiplayerMatch()}
       {activeView === 'MATCH_RESULTS' && renderMatchResults()}
+
+      {/* In-Game Multiplayer Chat */}
+      {roomState && (activeView === 'MULTIPLAYER_LOBBY' || activeView === 'MULTIPLAYER_MATCH' || activeView === 'MATCH_RESULTS') && (
+        <GameChatDrawer
+          gameId={roomState.id}
+          currentUser={{ id: userId, nickname, avatar }}
+          title={activeView === 'MULTIPLAYER_LOBBY' ? 'Lobby Chat' : 'Match Chat'}
+        />
+      )}
 
       {/* Mobile Keyboard Status / Open Button */}
       {(activeView === 'SINGLEPLAYER' || activeView === 'MULTIPLAYER_MATCH') && (gameStatus === 'playing' || countdownVal !== null) && (

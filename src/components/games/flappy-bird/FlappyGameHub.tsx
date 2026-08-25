@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useGamePresence } from '@/hooks/useGamePresence';
+import GameChatDrawer from '@/components/games/common/GameChatDrawer';
 
 export function FlappyGameHub() {
   const searchParams = useSearchParams();
@@ -1266,6 +1267,15 @@ export function FlappyGameHub() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* In-Game Multiplayer Chat */}
+      {roomState && (
+        <GameChatDrawer
+          gameId={roomState.id}
+          currentUser={{ id: userId, nickname, avatar: useUserStore.getState().avatar }}
+          title={roomState.status === 'LOBBY' ? 'Lobby Chat' : 'Match Chat'}
+        />
       )}
     </div>
   );

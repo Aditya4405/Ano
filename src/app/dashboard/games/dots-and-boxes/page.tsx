@@ -20,6 +20,8 @@ import { TurnIndicator } from "@/components/games/TurnIndicator";
 import { useExitWarning } from "@/hooks/useExitWarning";
 import { useInviteCooldown } from "@/hooks/useInviteCooldown";
 import { useGamePresence } from "@/hooks/useGamePresence";
+import GameChatDrawer from "@/components/games/common/GameChatDrawer";
+import { useGameChatStore } from "@/store/useGameChatStore";
 
 // Unique colors for each player (up to 8)
 const PLAYER_COLORS = [
@@ -43,7 +45,7 @@ function DotsAndBoxesPageContent() {
   const searchParams = useSearchParams();
   const gameIdParam = searchParams.get("gameId");
 
-  const { id: userId, nickname } = useUserStore();
+  const { id: userId, nickname, avatar } = useUserStore();
   const { currentRoomId } = useRoomConnectionStore();
   const { connectedChannelId, isMuted, toggleMute, disconnect: disconnectVoice } = useVoiceStore();
 
@@ -556,6 +558,13 @@ function DotsAndBoxesPageContent() {
           )}
         </AnimatePresence>
 
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={lobby.id}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar }}
+          title="Lobby Chat"
+        />
+
         {/* Error Toast */}
         <AnimatePresence>
           {error && (
@@ -978,6 +987,13 @@ function DotsAndBoxesPageContent() {
             <LogOut className="w-4 h-4" /> Leave Game
           </button>
         </div>
+
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={gameState.gameId}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar }}
+          title="Match Chat"
+        />
 
         {/* Error Toast */}
         <AnimatePresence>

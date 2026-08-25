@@ -22,6 +22,7 @@ import { useExitWarning } from "@/hooks/useExitWarning";
 import { useInviteCooldown } from "@/hooks/useInviteCooldown";
 import { UserPresence } from "@/components/ui/UserPresence";
 import { useGamePresence } from "@/hooks/useGamePresence";
+import GameChatDrawer from "@/components/games/common/GameChatDrawer";
 
 const DECLARED_RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace'];
 
@@ -41,7 +42,7 @@ function BluffGamePageContent() {
   const searchParams = useSearchParams();
   const gameIdParam = searchParams.get("gameId");
 
-  const { id: userId, nickname } = useUserStore();
+  const { id: userId, nickname, avatar } = useUserStore();
   const { currentRoomId } = useRoomConnectionStore();
   const { connectedChannelId, isMuted, toggleMute, disconnect: disconnectVoice } = useVoiceStore();
 
@@ -531,6 +532,14 @@ function BluffGamePageContent() {
             </div>
           </div>
         )}
+
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={lobby.id}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar }}
+          title="Lobby Chat"
+        />
+
         {rulesModal}
       </div>
     );
@@ -953,6 +962,13 @@ function BluffGamePageContent() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={gameState.gameId}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar }}
+          title="Match Chat"
+        />
       </div>
     );
   }

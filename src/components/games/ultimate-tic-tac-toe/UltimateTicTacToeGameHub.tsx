@@ -29,6 +29,7 @@ import { GameResultModal } from './GameResultModal';
 import { RulesModal } from './RulesModal';
 import { UserPresence } from '@/components/ui/UserPresence';
 import { useGamePresence } from '@/hooks/useGamePresence';
+import GameChatDrawer from '@/components/games/common/GameChatDrawer';
 
 export const UltimateTicTacToeGameHub: React.FC = () => {
   const router = useRouter();
@@ -946,6 +947,12 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
           </div>
         </div>
 
+        <GameChatDrawer
+          gameId={lobby.id}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar: useUserStore.getState().avatar }}
+          title="Lobby Chat"
+        />
+
         <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
         {renderInviteModal()}
       </div>
@@ -1038,6 +1045,13 @@ export const UltimateTicTacToeGameHub: React.FC = () => {
             }
           }}
           onExit={handleBackToMenu}
+        />
+
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={gameState.gameId}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar: useUserStore.getState().avatar }}
+          title="Match Chat"
         />
 
         <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />

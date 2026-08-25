@@ -29,6 +29,9 @@ const ENGINE_MAP = {
 
 const GAME_DISPLAY_NAMES = presenceService.GAME_DISPLAY_NAMES;
 
+// In-memory chat message buffer for active game lobbies and matches (gameId -> Message[])
+const gameChatMessages = new Map();
+
 function registerGameSockets(io, socket, onlineUsers, activeGames) {
   // Helper to serialize lobby map for client
   const serializeLobby = (lobby) => {
@@ -225,6 +228,43 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
       io.to(gameId).emit('lobby_state', serializeLobby(lobby));
       broadcastLobbies();
     }
+  });
+
+  // ========================
+  // IN-GAME MULTIPLAYER CHAT
+  // ========================
+
+  socket.on('game_chat_send', ({ gameId, userId, nickname, avatar, text }) => {
+    if (!gameId || !userId || !text || typeof text !== 'string') return;
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length > 500) return;
+
+    const message = {
+      id: `gmsg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      gameId,
+      senderId: userId,
+      senderName: nickname || 'Player',
+      senderAvatar: avatar || null,
+      text: trimmed,
+      timestamp: Date.now(),
+      system: false
+    };
+
+    if (!gameChatMessages.has(gameId)) {
+      gameChatMessages.set(gameId, []);
+    }
+    const history = gameChatMessages.get(gameId);
+    history.push(message);
+    if (history.length > 100) history.shift();
+
+    // Broadcast to everyone currently in the lobby / match room
+    io.to(gameId).emit('game_chat_message', message);
+  });
+
+  socket.on('game_chat_get_history', ({ gameId }) => {
+    if (!gameId) return;
+    const history = gameChatMessages.get(gameId) || [];
+    socket.emit('game_chat_history', { gameId, messages: history });
   });
 
   // ========================
