@@ -25,9 +25,14 @@ const voiceService = require('./services/voiceService');
 const ipService = require('./services/ipService');
 const presenceService = require('./services/presenceService');
 const prisma = require('./db');
+const { getRedisClient, createRedisClient, isRedisAvailable, closeRedis } = require('./lib/redis');
+const { createAdapter } = require('@socket.io/redis-adapter');
 
 // Start cleanup service
 cleanupService.start();
+
+// Initialize primary Redis client
+getRedisClient();
 
 const app = express();
 app.use(cors());
@@ -51,6 +56,25 @@ const io = new Server(server, {
     methods: ['GET', 'POST']
   }
 });
+
+// Setup Socket.IO Redis Adapter for multi-server scaling if Redis is available
+try {
+  const pubClient = createRedisClient('SocketIoPub');
+  const subClient = createRedisClient('SocketIoSub');
+
+  if (pubClient && subClient) {
+    Promise.all([pubClient.connect(), subClient.connect()])
+      .then(() => {
+        io.adapter(createAdapter(pubClient, subClient));
+        console.log('[Socket.IO] Redis adapter attached for multi-server scaling.');
+      })
+      .catch((err) => {
+        console.warn('[Socket.IO] Redis adapter connection failed, running standalone:', err.message);
+      });
+  }
+} catch (err) {
+  console.warn('[Socket.IO] Could not attach Redis adapter, running standalone:', err.message);
+}
 
 // Socket.io initialized
 // Reusable Multiplayer Game Framework Imports
@@ -581,7 +605,8 @@ io.on('connection', (socket) => {
     // Send current online user list & initial presences to the connecting user
     const onlineIds = Array.from(onlineUsers.keys());
     socket.emit('online_users', onlineIds);
-    socket.emit('initial_presence', presenceService.getAllPresences());
+    const initialPresences = await presenceService.getAllPresences();
+    socket.emit('initial_presence', initialPresences);
 
     // Broadcast live stats update
     broadcastLiveStats();
@@ -1071,6 +1096,13 @@ io.on('connection', (socket) => {
     }
   };
 
+  socket.on('presence_touch', async () => {
+    const userData = socketToUser.get(socket.id);
+    if (userData && userData.userId) {
+      await presenceService.touchPresence(userData.userId, socket.id);
+    }
+  });
+
   socket.on('leave_room', handleLeave);
   socket.on('disconnect', handleDisconnect);
 });
@@ -1079,3 +1111,45 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`Socket.IO Server is running on port ${PORT}`);
 });
+
+// ========================
+// GRACEFUL SHUTDOWN
+// ========================
+let isShuttingDown = false;
+async function handleShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n[Server] Received ${signal}. Starting graceful shutdown...`);
+
+  // Stop accepting new connections
+  server.close(async () => {
+    console.log('[Server] HTTP and Socket server closed.');
+    
+    try {
+      // Disconnect all sockets
+      io.disconnectSockets(true);
+      
+      // Close Redis connections
+      await closeRedis();
+
+      // Disconnect Prisma DB
+      await prisma.$disconnect();
+      console.log('[Server] Database connection closed.');
+      
+      console.log('[Server] Graceful shutdown complete.');
+      process.exit(0);
+    } catch (err) {
+      console.error('[Server] Error during shutdown:', err);
+      process.exit(1);
+    }
+  });
+
+  // Force exit after 10s if hanging
+  setTimeout(() => {
+    console.error('[Server] Forcefully shutting down due to timeout.');
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));

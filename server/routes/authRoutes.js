@@ -2,6 +2,7 @@ const express = require('express');
 const { OAuth2Client } = require('google-auth-library');
 const userService = require('../services/userService');
 const ipService = require('../services/ipService');
+const { createRateLimiter } = require('../lib/rateLimiter');
 
 const router = express.Router();
 
@@ -9,7 +10,14 @@ const router = express.Router();
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const client = new OAuth2Client(CLIENT_ID);
 
-router.post('/google', async (req, res) => {
+const authLimiter = createRateLimiter({
+  action: 'auth:google',
+  windowMs: 60000,
+  max: 20,
+  message: 'Too many authentication attempts. Please wait a minute and try again.'
+});
+
+router.post('/google', authLimiter, async (req, res) => {
   try {
     const { token, guestId } = req.body;
 
