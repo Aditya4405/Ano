@@ -1091,6 +1091,34 @@ io.on('connection', (socket) => {
         }
       }
 
+      // Clean up any waiting lobbies the user is in or hosting
+      const LobbyService = require('./games/lobby/LobbyService');
+      const affected = await LobbyService.removeUserFromAllLobbies(userId);
+      if (affected && affected.length > 0) {
+        for (const item of affected) {
+          if (item.lobby) {
+            const playersList = Array.from(item.lobby.players.values()).map(p => ({
+              userId: p.userId,
+              nickname: p.nickname,
+              isReady: p.isReady,
+              role: p.role,
+              assetReady: p.assetReady ?? false
+            }));
+            io.to(item.lobbyId).emit('lobby_state', {
+              id: item.lobby.id,
+              hostId: item.lobby.hostId,
+              gameType: item.lobby.gameType,
+              players: playersList,
+              status: item.lobby.status,
+              settings: item.lobby.settings || null
+            });
+          } else {
+            io.to(item.lobbyId).emit('lobby_closed', { message: 'Lobby has been closed.' });
+          }
+        }
+        io.emit('lobbies_updated', LobbyService.getPublicLobbies());
+      }
+
       await presenceService.handleSocketDisconnect(userId, socket.id);
       socketToUser.delete(socket.id);
     }

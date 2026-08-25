@@ -67,7 +67,19 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
   socket.on('lobby_create', async ({ gameType, userId, nickname }) => {
     console.log(`Lobby create requested by ${nickname} (${userId}) for ${gameType}`);
     const gameId = `game_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const lobby = await LobbyService.createLobby(gameId, userId, nickname, gameType);
+    const { lobby, affectedLobbies } = await LobbyService.createLobby(gameId, userId, nickname, gameType);
+
+    // Notify any previous lobbies that the user left
+    if (affectedLobbies && affectedLobbies.length > 0) {
+      for (const affected of affectedLobbies) {
+        socket.leave(affected.lobbyId);
+        if (affected.deleted) {
+          io.to(affected.lobbyId).emit('lobby_closed', { message: 'Host left or closed the lobby.' });
+        } else if (affected.lobby) {
+          io.to(affected.lobbyId).emit('lobby_state', serializeLobby(affected.lobby));
+        }
+      }
+    }
 
     socket.join(gameId);
     socket.emit('lobby_state', serializeLobby(lobby));
@@ -77,11 +89,23 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
   });
 
   socket.on('lobby_join', async ({ gameId, userId, nickname }) => {
-    console.log(`Player ${nickname} joined lobby ${gameId}`);
+    console.log(`Player ${nickname} (${userId}) joined lobby ${gameId}`);
 
-    const lobby = await LobbyService.joinLobby(gameId, userId, nickname);
+    const { lobby, affectedLobbies } = await LobbyService.joinLobby(gameId, userId, nickname);
     if (!lobby) {
-      return socket.emit('game_error', { message: 'Lobby full or does not exist.' });
+      return socket.emit('game_error', { message: 'Lobby is full or no longer exists.' });
+    }
+
+    // Leave any previous socket rooms for affected lobbies and notify them
+    if (affectedLobbies && affectedLobbies.length > 0) {
+      for (const affected of affectedLobbies) {
+        socket.leave(affected.lobbyId);
+        if (affected.deleted) {
+          io.to(affected.lobbyId).emit('lobby_closed', { message: 'Host left or closed the lobby.' });
+        } else if (affected.lobby) {
+          io.to(affected.lobbyId).emit('lobby_state', serializeLobby(affected.lobby));
+        }
+      }
     }
 
     socket.join(gameId);
@@ -139,7 +163,10 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
 
     if (lobby) {
       io.to(gameId).emit('lobby_state', serializeLobby(lobby));
+    } else {
+      io.to(gameId).emit('lobby_closed', { message: 'Lobby has been closed.' });
     }
+    broadcastLobbies();
     
     // Also remove from active game if playing
     const engine = activeGames.get(gameId);
