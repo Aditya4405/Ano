@@ -7,8 +7,8 @@ import { useUserStore } from "@/store/useUserStore";
 import { usePresenceStore } from "@/store/usePresenceStore";
 import { socketService } from "@/lib/socket";
 import { GlassModal } from "@/components/layout/GlassModal";
-
-
+import { UserAvatar } from "@/components/ui/UserAvatar";
+import { UserPresence } from "@/components/ui/UserPresence";
 
 interface SearchResult {
   id: string;
@@ -20,11 +20,12 @@ interface RoomInviteModalProps {
   isOpen: boolean;
   onClose: () => void;
   roomId: string;
-  roomName: string;
+  roomName?: string;
 }
 
 export function RoomInviteModal({ isOpen, onClose, roomId, roomName }: RoomInviteModalProps) {
-  const { id: myUserId, nickname: myNickname } = useUserStore();
+  const myUserId = useUserStore((s) => s.id);
+  const myNickname = useUserStore((s) => s.nickname);
   const isOnline = usePresenceStore((s) => s.isOnline);
 
   const [query, setQuery] = useState("");
@@ -37,43 +38,37 @@ export function RoomInviteModal({ isOpen, onClose, roomId, roomName }: RoomInvit
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Auto-focus when modal opens
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 100);
       setInvitedIds(new Set());
-
-      // Fetch online users immediately on open
-      const fetchOnlineUsers = async () => {
-        setOnlineLoading(true);
-        try {
-          const res = await fetch(`${API_URL}/api/users/online`);
-          if (res.ok) {
-            const data = await res.json();
-            // Filter out current user
-            setOnlineUsers(data.filter((u: SearchResult) => u.id !== myUserId));
-          }
-        } catch (err) {
-          console.error("Failed to load online users:", err);
-        } finally {
-          setOnlineLoading(false);
-        }
-      };
-
-      fetchOnlineUsers();
-    } else {
       setQuery("");
       setResults([]);
-      setOnlineUsers([]);
+      
+      // Fetch currently online users automatically
+      setOnlineLoading(true);
+      fetch(`${API_URL}/api/users/online`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setOnlineUsers(data.filter((u: SearchResult) => u.id !== myUserId));
+          }
+        })
+        .catch((err) => console.error("Failed to fetch online users:", err))
+        .finally(() => setOnlineLoading(false));
     }
   }, [isOpen, myUserId]);
 
+  // Debounced user search
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-
     if (!query.trim()) {
       setResults([]);
+      setLoading(false);
       return;
     }
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
@@ -159,14 +154,18 @@ export function RoomInviteModal({ isOpen, onClose, roomId, roomName }: RoomInvit
               className="flex items-center justify-between gap-3 w-full px-3 py-2.5 rounded-lg hover:bg-white/5 transition-colors"
             >
               <div className="flex items-center gap-3 min-w-0">
-                {user.avatar ? (
-                  <img src={user.avatar} alt={user.nickname} className="w-10 h-10 rounded-full object-cover" />
-                ) : (
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm">
-                    {user.nickname.substring(0, 2).toUpperCase()}
-                  </div>
-                )}
-                <p className="text-sm font-medium text-white truncate">{user.nickname}</p>
+                <div className="relative flex-shrink-0">
+                  <UserAvatar
+                    src={user.avatar}
+                    nickname={user.nickname}
+                    size="w-9 h-9"
+                  />
+                  <UserPresence userId={user.id} variant="avatar-badge" size="xs" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-white truncate">{user.nickname}</p>
+                  <UserPresence userId={user.id} variant="inline" />
+                </div>
               </div>
 
               <button

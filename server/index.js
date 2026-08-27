@@ -23,10 +23,16 @@ const flappyRoutes = require('./routes/flappyRoutes');
 const notificationService = require('./services/notificationService');
 const voiceService = require('./services/voiceService');
 const ipService = require('./services/ipService');
+const presenceService = require('./services/presenceService');
 const prisma = require('./db');
+const { getRedisClient, createRedisClient, isRedisAvailable, closeRedis } = require('./lib/redis');
+const { createAdapter } = require('@socket.io/redis-adapter');
 
 // Start cleanup service
 cleanupService.start();
+
+// Initialize primary Redis client
+getRedisClient();
 
 const app = express();
 app.use(cors());
@@ -51,6 +57,25 @@ const io = new Server(server, {
   }
 });
 
+// Setup Socket.IO Redis Adapter for multi-server scaling if Redis is available
+try {
+  const pubClient = createRedisClient('SocketIoPub');
+  const subClient = createRedisClient('SocketIoSub');
+
+  if (pubClient && subClient) {
+    Promise.all([pubClient.connect(), subClient.connect()])
+      .then(() => {
+        io.adapter(createAdapter(pubClient, subClient));
+        console.log('[Socket.IO] Redis adapter attached for multi-server scaling.');
+      })
+      .catch((err) => {
+        console.warn('[Socket.IO] Redis adapter connection failed, running standalone:', err.message);
+      });
+  }
+} catch (err) {
+  console.warn('[Socket.IO] Could not attach Redis adapter, running standalone:', err.message);
+}
+
 // Socket.io initialized
 // Reusable Multiplayer Game Framework Imports
 const registerGameSockets = require('./games/socket/GameSocket');
@@ -61,6 +86,9 @@ const rooms = new Map();        // roomId -> Set of { socketId, userId, nickname
 const userToRoom = new Map();   // socketId -> roomId
 const onlineUsers = new Map();  // userId -> Set<socketId> (global presence)
 const socketToUser = new Map(); // socketId -> { userId, nickname }
+
+// Initialize presence service
+presenceService.init(io, onlineUsers);
 
 // Now register admin routes with access to in-memory Maps
 app.use('/api/admin', createAdminRoutes(onlineUsers, rooms, activeGames));
@@ -209,7 +237,15 @@ app.get('/api/users/online', async (req, res) => {
       where: { id: { in: onlineIds } },
       select: { id: true, nickname: true, avatar: true, bio: true, presenceStatus: true }
     });
-    res.json(users);
+    const enriched = users.map(u => {
+      const pres = presenceService.getPresence(u.id);
+      return {
+        ...u,
+        presence: pres,
+        isOnline: pres ? pres.status !== 'OFFLINE' : true,
+      };
+    });
+    res.json(enriched);
   } catch (err) {
     console.error('Error fetching online users:', err);
     res.status(500).json({ error: 'Failed to fetch online users' });
@@ -560,15 +596,35 @@ io.on('connection', (socket) => {
     onlineUsers.get(userId).add(socket.id);
     socket.join(userId);
 
-    // Broadcast that this user is online
+    // Register presence in presenceService
+    await presenceService.setOnline(userId, socket.id);
+
+    // Broadcast that this user is online (legacy compatibility)
     socket.broadcast.emit('user_online', { userId });
 
-    // Send current online user list to the connecting user
+    // Send current online user list & initial presences to the connecting user
     const onlineIds = Array.from(onlineUsers.keys());
     socket.emit('online_users', onlineIds);
+    const initialPresences = await presenceService.getAllPresences();
+    socket.emit('initial_presence', initialPresences);
 
     // Broadcast live stats update
     broadcastLiveStats();
+  });
+
+  // Standalone / single-player game presence events
+  socket.on('game_enter', async ({ gameType, gameId, userId }) => {
+    const userData = socketToUser.get(socket.id);
+    const uid = userData?.userId || userId;
+    if (!uid) return;
+    await presenceService.setPlaying(uid, socket.id, { gameId, gameType });
+  });
+
+  socket.on('game_leave', async ({ gameType, gameId, userId }) => {
+    const userData = socketToUser.get(socket.id);
+    const uid = userData?.userId || userId;
+    if (!uid) return;
+    await presenceService.clearPlaying(uid, socket.id, gameId);
   });
 
   // ========================
@@ -1009,7 +1065,7 @@ io.on('connection', (socket) => {
     // Handle room leave
     await handleLeave();
 
-    // Handle global presence
+    // Handle global presence & game sockets
     const userData = socketToUser.get(socket.id);
     if (userData) {
       const { userId } = userData;
@@ -1035,9 +1091,45 @@ io.on('connection', (socket) => {
         }
       }
 
+      // Clean up any waiting lobbies the user is in or hosting
+      const LobbyService = require('./games/lobby/LobbyService');
+      const affected = await LobbyService.removeUserFromAllLobbies(userId);
+      if (affected && affected.length > 0) {
+        for (const item of affected) {
+          if (item.lobby) {
+            const playersList = Array.from(item.lobby.players.values()).map(p => ({
+              userId: p.userId,
+              nickname: p.nickname,
+              isReady: p.isReady,
+              role: p.role,
+              assetReady: p.assetReady ?? false
+            }));
+            io.to(item.lobbyId).emit('lobby_state', {
+              id: item.lobby.id,
+              hostId: item.lobby.hostId,
+              gameType: item.lobby.gameType,
+              players: playersList,
+              status: item.lobby.status,
+              settings: item.lobby.settings || null
+            });
+          } else {
+            io.to(item.lobbyId).emit('lobby_closed', { message: 'Lobby has been closed.' });
+          }
+        }
+        io.emit('lobbies_updated', LobbyService.getPublicLobbies());
+      }
+
+      await presenceService.handleSocketDisconnect(userId, socket.id);
       socketToUser.delete(socket.id);
     }
   };
+
+  socket.on('presence_touch', async () => {
+    const userData = socketToUser.get(socket.id);
+    if (userData && userData.userId) {
+      await presenceService.touchPresence(userData.userId, socket.id);
+    }
+  });
 
   socket.on('leave_room', handleLeave);
   socket.on('disconnect', handleDisconnect);
@@ -1047,3 +1139,45 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`Socket.IO Server is running on port ${PORT}`);
 });
+
+// ========================
+// GRACEFUL SHUTDOWN
+// ========================
+let isShuttingDown = false;
+async function handleShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n[Server] Received ${signal}. Starting graceful shutdown...`);
+
+  // Stop accepting new connections
+  server.close(async () => {
+    console.log('[Server] HTTP and Socket server closed.');
+    
+    try {
+      // Disconnect all sockets
+      io.disconnectSockets(true);
+      
+      // Close Redis connections
+      await closeRedis();
+
+      // Disconnect Prisma DB
+      await prisma.$disconnect();
+      console.log('[Server] Database connection closed.');
+      
+      console.log('[Server] Graceful shutdown complete.');
+      process.exit(0);
+    } catch (err) {
+      console.error('[Server] Error during shutdown:', err);
+      process.exit(1);
+    }
+  });
+
+  // Force exit after 10s if hanging
+  setTimeout(() => {
+    console.error('[Server] Forcefully shutting down due to timeout.');
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));

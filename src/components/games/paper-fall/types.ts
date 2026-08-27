@@ -270,6 +270,15 @@ export interface GameState {
   wordsSpawnedThisLevel?: number; // Used to track campaign level progression
 }
 
+export interface DifficultyStats {
+  highScore: number;
+  bestWpm: number;
+  wordsTyped: number;
+  gamesPlayed: number;
+  bestAccuracy?: number;
+  highestLevel?: number;
+}
+
 export interface SinglePlayerStats {
   highScore: number;
   gamesPlayed: number;
@@ -278,6 +287,12 @@ export interface SinglePlayerStats {
   averageWpm: number;
   bestWpm: number;
   averageAccuracy: number;
+  byDifficulty?: {
+    EASY?: DifficultyStats;
+    MEDIUM?: DifficultyStats;
+    HARD?: DifficultyStats;
+    CAMPAIGN?: DifficultyStats;
+  };
 }
 
 export interface MultiplayerStats {
@@ -299,4 +314,34 @@ export interface MatchHistoryEntry {
   accuracy: number;
   rank?: number;
   playerCount?: number;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  userId: string;
+  gameType: string;
+  highScore: number;
+  totalPlayTimeSeconds: number;
+  lastPlayed: string;
+  createdAt?: string;
+  extraStats?: {
+    wordsTyped?: number;
+    bestWpm?: number;
+    accuracy?: number;
+    gamesPlayed?: number;
+    highestLevel?: number;
+    byDifficulty?: {
+      EASY?: DifficultyStats;
+      MEDIUM?: DifficultyStats;
+      HARD?: DifficultyStats;
+      CAMPAIGN?: DifficultyStats;
+    };
+    [key: string]: any;
+  };
+  user?: {
+    nickname?: string;
+    username?: string;
+    name?: string;
+    avatar?: string | null;
+  };
 }

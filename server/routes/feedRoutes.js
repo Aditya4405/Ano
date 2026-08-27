@@ -1,23 +1,35 @@
 const express = require('express');
 const feedService = require('../services/feedService');
-
 const prisma = require('../db');
+const cache = require('../lib/cache');
+const { createRateLimiter } = require('../lib/rateLimiter');
 
 const router = express.Router();
 
-// Get active announcements
+const postCreationLimiter = createRateLimiter({
+  action: 'feed:create_post',
+  windowMs: 60000,
+  max: 10,
+  message: 'You are posting too quickly. Please wait a minute before sharing another post.',
+  keyGenerator: (req) => req.body?.authorId || req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip
+});
+
+// Get active announcements (cached for 60s)
 router.get('/announcements', async (req, res) => {
   try {
-    const now = new Date();
-    const announcements = await prisma.announcement.findMany({
-      where: {
-        OR: [
-          { expiryDate: null },
-          { expiryDate: { gte: now } }
-        ]
-      },
-      orderBy: { createdAt: 'desc' }
-    });
+    const announcements = await cache.wrap('feed:announcements', async () => {
+      const now = new Date();
+      return prisma.announcement.findMany({
+        where: {
+          OR: [
+            { expiryDate: null },
+            { expiryDate: { gte: now } }
+          ]
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+    }, 60);
+
     res.json(announcements);
   } catch (err) {
     console.error('Error fetching announcements:', err);
@@ -25,9 +37,14 @@ router.get('/announcements', async (req, res) => {
   }
 });
 
-// Get available tags
-router.get('/tags', (req, res) => {
-  res.json(feedService.getAvailableTags());
+// Get available tags (cached for 300s)
+router.get('/tags', async (req, res) => {
+  try {
+    const tags = await cache.wrap('feed:tags', () => feedService.getAvailableTags(), 300);
+    res.json(tags);
+  } catch (err) {
+    res.json(feedService.getAvailableTags());
+  }
 });
 
 // Get saved posts for a user
@@ -55,15 +72,16 @@ router.get('/user/:userId/stats', async (req, res) => {
   }
 });
 
-// Get feed posts (query: tab, page, limit, tag, userId)
+// Get feed posts (query: tab, cursor, page, limit, tag, userId)
 router.get('/', async (req, res) => {
   try {
     const tab = req.query.tab || 'latest';
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const cursor = req.query.cursor || undefined;
+    const page = req.query.page ? parseInt(req.query.page) : undefined;
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 50);
     const tag = req.query.tag || undefined;
     const userId = req.query.userId || undefined;
-    const result = await feedService.getPosts({ tab, page, limit, tag, userId });
+    const result = await feedService.getPosts({ tab, cursor, page, limit, tag, userId });
     res.json(result);
   } catch (err) {
     console.error('Error fetching feed:', err);
@@ -71,8 +89,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Create a post
-router.post('/', async (req, res) => {
+// Create a post (with rate limiting)
+router.post('/', postCreationLimiter, async (req, res) => {
   try {
     const { authorId, content, imageUrl, isAnonymous, tags } = req.body;
     if (!authorId) return res.status(400).json({ error: 'authorId is required' });

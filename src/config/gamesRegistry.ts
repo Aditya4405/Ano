@@ -4,6 +4,7 @@ import { Game2048 } from '@/components/games/Game2048';
 import { Minesweeper } from '@/components/games/Minesweeper';
 import { PaperFallGameHub } from '@/components/games/paper-fall/PaperFallGameHub';
 import { ArrowMazeGameHub } from '@/components/games/arrow-maze/ArrowMazeGameHub';
+import { UltimateTicTacToeGameHub } from '@/components/games/ultimate-tic-tac-toe/UltimateTicTacToeGameHub';
 
 export type GameSupportedMode = 'SOLO' | 'MULTIPLAYER' | 'BOTH';
 
@@ -202,6 +203,21 @@ export const GAMES_REGISTRY: Record<string, GameDefinition> = {
     type: 'multiplayer',
     href: '/dashboard/games/arrow-maze',
     component: ArrowMazeGameHub
+  },
+  'ultimate-tic-tac-toe': {
+    id: 'ultimate-tic-tac-toe',
+    name: 'Ultimate Tic-Tac-Toe',
+    title: 'Ultimate Tic-Tac-Toe',
+    slug: 'ultimate-tic-tac-toe',
+    description: 'A strategic 9x9 battleground of mini Tic-Tac-Toe boards. Every move forces your opponent into a specific board!',
+    icon: '📐',
+    color: 'from-cyan-500 via-indigo-600 to-purple-800',
+    supportedModes: 'BOTH',
+    enabled: true,
+    displayOrder: 13,
+    type: 'multiplayer',
+    href: '/dashboard/games/ultimate-tic-tac-toe',
+    component: UltimateTicTacToeGameHub
   }
 };
 

@@ -20,20 +20,27 @@ export function AnnouncementsBanner() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
     const fetchAnnouncements = async () => {
       try {
         const res = await fetch(`${API_URL}/api/feed/announcements`);
-        if (res.ok) {
+        if (res.ok && isMounted) {
           const data = await res.json();
-          setAnnouncements(data);
+          setAnnouncements(Array.isArray(data) ? data : []);
         }
-      } catch (err) {
-        console.error("Failed to fetch announcements:", err);
+      } catch {
+        // Server might be temporarily starting up or offline; fail gracefully
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
     fetchAnnouncements();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Auto rotate announcements

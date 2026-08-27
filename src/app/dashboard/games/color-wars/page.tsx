@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users, Play, UserPlus, LogOut, Loader2, Check, X,
@@ -17,6 +18,8 @@ import { MessageInput } from "@/components/room/MessageInput";
 import { TurnIndicator } from "@/components/games/TurnIndicator";
 import { useExitWarning } from "@/hooks/useExitWarning";
 import { useInviteCooldown } from "@/hooks/useInviteCooldown";
+import { useGamePresence } from "@/hooks/useGamePresence";
+import GameChatDrawer from "@/components/games/common/GameChatDrawer";
 
 // Map server color names to Tailwind design assets and hex codes
 interface ColorAsset {
@@ -100,7 +103,7 @@ function ColorWarsPageContent() {
   const searchParams = useSearchParams();
   const gameIdParam = searchParams.get("gameId");
 
-  const { id: userId, nickname } = useUserStore();
+  const { id: userId, nickname, avatar } = useUserStore();
   const { currentRoomId } = useRoomConnectionStore();
   const { connectedChannelId, isMuted, toggleMute, disconnect: disconnectVoice } = useVoiceStore();
 
@@ -110,6 +113,9 @@ function ColorWarsPageContent() {
     invitePlayer, updateSettings, startGame, selectTile,
     clearState, setupListeners, fetchLobbies
   } = useColorWarsStore();
+
+  // Track active game presence when match is running
+  useGamePresence('COLOR_WARS', Boolean(gameState), gameState?.gameId);
 
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showChatSidebar, setShowChatSidebar] = useState(false);
@@ -338,22 +344,31 @@ function ColorWarsPageContent() {
     const activeColorLobbies = availableLobbies.filter(l => l.gameType === 'COLOR_WARS');
     return (
       <div className="flex flex-col h-screen bg-black text-white overflow-y-auto p-4 space-y-6">
-        <div className="flex justify-between items-center bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md max-w-6xl mx-auto w-full">
-          <div className="flex items-center gap-4">
-            <button onClick={() => router.push("/dashboard/games")} className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors">
+        <div className="flex items-center justify-between p-4 bg-white/5 border-b border-white/10 flex-shrink-0 z-30 backdrop-blur-md max-w-6xl mx-auto w-full rounded-2xl">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <Link href="/dashboard/games" className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer" title="Back to Arcade">
               <ArrowLeft className="w-5 h-5" />
-            </button>
-            <div>
-              <h1 className="text-xl font-bold flex items-center gap-2">💥 Chain Reaction</h1>
-              <p className="text-xs text-gray-400">Strategically place energy, trigger reactions, and control the grid</p>
+            </Link>
+            <Link href="/dashboard" className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
+              <img src="/ano-logo.png" alt="Ano Logo" className="w-8 h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
+              <span className="text-lg font-bold text-white tracking-wide">Ano</span>
+            </Link>
+            <div className="ml-1 sm:ml-2 border-l border-white/20 pl-3 sm:pl-4">
+              <h1 className="text-base sm:text-lg md:text-xl font-bold text-white flex items-center gap-2">
+                <span>💥</span>
+                <span className="truncate">Chain Reaction</span>
+              </h1>
             </div>
           </div>
-          <button 
-            onClick={() => setShowRulesModal(true)}
-            className="px-4 py-2 bg-white/5 border border-white/10 text-gray-300 hover:text-white rounded-xl flex items-center gap-2 transition-colors text-sm font-semibold hover:bg-white/10"
-          >
-            <BookOpen className="w-4 h-4" /> Rules
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setShowRulesModal(true)}
+              className="px-3.5 py-1.5 bg-white/5 border border-white/10 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors hover:bg-white/10 cursor-pointer"
+            >
+              <BookOpen className="w-4 h-4 text-rose-400" />
+              <span className="hidden sm:inline">Rules</span>
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
@@ -635,6 +650,13 @@ function ColorWarsPageContent() {
             </GlassCard>
           </div>
         )}
+
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={lobby.id}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar }}
+          title="Lobby Chat"
+        />
       </div>
     );
   }
@@ -1047,6 +1069,13 @@ function ColorWarsPageContent() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={gameState.gameId}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar }}
+          title="Match Chat"
+        />
 
         {rulesModal}
       </div>

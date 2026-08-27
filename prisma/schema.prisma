@@ -184,6 +184,11 @@ model Post {
   author                User             @relation("PostAuthor", fields: [authorId], references: [id])
   savedBy               SavedPost[]
   votes                 Vote[]
+
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([score(sort: Desc), createdAt(sort: Desc)])
+  @@index([authorId])
+  @@index([moderationStatus])
 }
 
 model Comment {
@@ -312,6 +317,7 @@ enum GameType {
   FLAPPY_BIRD
   PAPER_FALL
   ARROW_MAZE
+  ULTIMATE_TIC_TAC_TOE
 }
 
 enum GameStatus {
@@ -343,6 +349,7 @@ enum MoveType {
   INK_DECEPTION_SELECT_WORD
   INK_DECEPTION_GUESS
   CLICK_ARROW
+  ULTIMATE_TIC_TAC_TOE_MOVE
 }
 
 enum UserRole {

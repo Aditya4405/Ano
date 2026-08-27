@@ -12,7 +12,18 @@ import type {
   MultiplayerStats,
   MatchHistoryEntry,
   PlayerMatchStats,
+  LeaderboardEntry,
+  DifficultyStats,
 } from '@/components/games/paper-fall/types';
+
+const createDefaultDifficultyStats = (): DifficultyStats => ({
+  highScore: 0,
+  bestWpm: 0,
+  wordsTyped: 0,
+  gamesPlayed: 0,
+  bestAccuracy: 0,
+  highestLevel: 1,
+});
 
 interface PaperFallStoreState {
   // Settings
@@ -20,10 +31,12 @@ interface PaperFallStoreState {
   difficulty: Difficulty;
   matchDuration: MatchDuration;
 
-  // Stats
+  // Stats & Leaderboard
   singlePlayerStats: SinglePlayerStats;
   multiplayerStats: MultiplayerStats;
   matchHistory: MatchHistoryEntry[];
+  leaderboard: LeaderboardEntry[];
+  isLoadingLeaderboard: boolean;
 
   // Multiplayer
   roomState: PaperFallRoomState | null;
@@ -37,6 +50,7 @@ interface PaperFallStoreState {
 
   // Actions — API
   fetchStats: (userId: string) => Promise<void>;
+  fetchLeaderboard: () => Promise<void>;
   submitSinglePlayerScore: (
     userId: string,
     score: number,
@@ -44,6 +58,10 @@ interface PaperFallStoreState {
     playTimeSeconds: number,
     nickname?: string,
     avatar?: string | null,
+    difficulty?: Difficulty | 'CAMPAIGN',
+    wpm?: number,
+    accuracy?: number,
+    level?: number,
   ) => Promise<{ highScore: number } | null>;
 
   // Actions — Multiplayer Lobby
@@ -81,6 +99,12 @@ export const usePaperFallStore = create<PaperFallStoreState>((set, get) => ({
     averageWpm: 0,
     bestWpm: 0,
     averageAccuracy: 0,
+    byDifficulty: {
+      EASY: createDefaultDifficultyStats(),
+      MEDIUM: createDefaultDifficultyStats(),
+      HARD: createDefaultDifficultyStats(),
+      CAMPAIGN: createDefaultDifficultyStats(),
+    },
   },
   multiplayerStats: {
     gamesPlayed: 0,
@@ -91,6 +115,8 @@ export const usePaperFallStore = create<PaperFallStoreState>((set, get) => ({
     bestWpm: 0,
   },
   matchHistory: [],
+  leaderboard: [],
+  isLoadingLeaderboard: false,
   roomState: null,
   availableLobbies: [],
   matchResults: null,
@@ -100,7 +126,7 @@ export const usePaperFallStore = create<PaperFallStoreState>((set, get) => ({
   setMatchDuration: (d) => set({ matchDuration: d }),
 
   fetchStats: async (userId) => {
-    if (!userId) return;
+    if (!userId || userId === 'guest') return;
     try {
       const res = await axios.get(`${getApiUrl()}/api/games/stats/${userId}`);
       if (res.data) {
@@ -108,38 +134,166 @@ export const usePaperFallStore = create<PaperFallStoreState>((set, get) => ({
           ? res.data.find((s: any) => s.gameType === 'paper-fall')
           : null;
         if (gameStat) {
-          set({
-            singlePlayerStats: {
-              highScore: gameStat.highScore || 0,
-              gamesPlayed: gameStat.gamesPlayed || 0,
-              wordsTyped: gameStat.wordsTyped || 0,
-              timeSurvivedSeconds: gameStat.totalPlayTimeSeconds || 0,
-              averageWpm: gameStat.averageWpm || 0,
-              bestWpm: gameStat.bestWpm || 0,
-              averageAccuracy: gameStat.averageAccuracy || 0,
-            },
+          const extra = gameStat.extraStats || {};
+          const incomingByDiff = extra.byDifficulty;
+
+          set((prev) => {
+            const prevByDiff = prev.singlePlayerStats.byDifficulty || {
+              EASY: createDefaultDifficultyStats(),
+              MEDIUM: createDefaultDifficultyStats(),
+              HARD: createDefaultDifficultyStats(),
+              CAMPAIGN: createDefaultDifficultyStats(),
+            };
+
+            const mergedByDiff = {
+              EASY: {
+                highScore: Math.max(prevByDiff.EASY?.highScore || 0, incomingByDiff?.EASY?.highScore || 0),
+                bestWpm: Math.max(prevByDiff.EASY?.bestWpm || 0, incomingByDiff?.EASY?.bestWpm || 0),
+                wordsTyped: (prevByDiff.EASY?.wordsTyped || 0) + (incomingByDiff?.EASY?.wordsTyped || 0),
+                gamesPlayed: Math.max(prevByDiff.EASY?.gamesPlayed || 0, incomingByDiff?.EASY?.gamesPlayed || 0),
+                bestAccuracy: Math.max(prevByDiff.EASY?.bestAccuracy || 0, incomingByDiff?.EASY?.bestAccuracy || 0),
+              },
+              MEDIUM: {
+                highScore: Math.max(prevByDiff.MEDIUM?.highScore || 0, incomingByDiff?.MEDIUM?.highScore || 0),
+                bestWpm: Math.max(prevByDiff.MEDIUM?.bestWpm || 0, incomingByDiff?.MEDIUM?.bestWpm || 0),
+                wordsTyped: (prevByDiff.MEDIUM?.wordsTyped || 0) + (incomingByDiff?.MEDIUM?.wordsTyped || 0),
+                gamesPlayed: Math.max(prevByDiff.MEDIUM?.gamesPlayed || 0, incomingByDiff?.MEDIUM?.gamesPlayed || 0),
+                bestAccuracy: Math.max(prevByDiff.MEDIUM?.bestAccuracy || 0, incomingByDiff?.MEDIUM?.bestAccuracy || 0),
+              },
+              HARD: {
+                highScore: Math.max(prevByDiff.HARD?.highScore || 0, incomingByDiff?.HARD?.highScore || 0),
+                bestWpm: Math.max(prevByDiff.HARD?.bestWpm || 0, incomingByDiff?.HARD?.bestWpm || 0),
+                wordsTyped: (prevByDiff.HARD?.wordsTyped || 0) + (incomingByDiff?.HARD?.wordsTyped || 0),
+                gamesPlayed: Math.max(prevByDiff.HARD?.gamesPlayed || 0, incomingByDiff?.HARD?.gamesPlayed || 0),
+                bestAccuracy: Math.max(prevByDiff.HARD?.bestAccuracy || 0, incomingByDiff?.HARD?.bestAccuracy || 0),
+              },
+              CAMPAIGN: {
+                highScore: Math.max(prevByDiff.CAMPAIGN?.highScore || 0, incomingByDiff?.CAMPAIGN?.highScore || 0),
+                bestWpm: Math.max(prevByDiff.CAMPAIGN?.bestWpm || 0, incomingByDiff?.CAMPAIGN?.bestWpm || 0),
+                wordsTyped: (prevByDiff.CAMPAIGN?.wordsTyped || 0) + (incomingByDiff?.CAMPAIGN?.wordsTyped || 0),
+                gamesPlayed: Math.max(prevByDiff.CAMPAIGN?.gamesPlayed || 0, incomingByDiff?.CAMPAIGN?.gamesPlayed || 0),
+                bestAccuracy: Math.max(prevByDiff.CAMPAIGN?.bestAccuracy || 0, incomingByDiff?.CAMPAIGN?.bestAccuracy || 0),
+                highestLevel: Math.max(prevByDiff.CAMPAIGN?.highestLevel || 1, incomingByDiff?.CAMPAIGN?.highestLevel || 1),
+              },
+            };
+
+            return {
+              singlePlayerStats: {
+                highScore: Math.max(gameStat.highScore || 0, prev.singlePlayerStats.highScore),
+                gamesPlayed: extra.gamesPlayed || (prev.singlePlayerStats.gamesPlayed + 1),
+                wordsTyped: extra.wordsTyped || prev.singlePlayerStats.wordsTyped,
+                timeSurvivedSeconds: gameStat.totalPlayTimeSeconds || prev.singlePlayerStats.timeSurvivedSeconds,
+                averageWpm: extra.averageWpm || prev.singlePlayerStats.averageWpm,
+                bestWpm: Math.max(extra.bestWpm || 0, prev.singlePlayerStats.bestWpm),
+                averageAccuracy: extra.averageAccuracy || prev.singlePlayerStats.averageAccuracy,
+                byDifficulty: mergedByDiff,
+              },
+            };
           });
         }
       }
     } catch (err) {
-      console.error('Failed to fetch paperfall stats:', err);
+      console.warn('Failed to fetch paperfall stats:', err);
     }
   },
 
-  submitSinglePlayerScore: async (userId, score, wordsTyped, playTimeSeconds, nickname, avatar) => {
-    if (!userId) return null;
-    const defaultRewards = { highScore: Math.max(score, get().singlePlayerStats.highScore || 0) };
+  fetchLeaderboard: async () => {
+    set({ isLoadingLeaderboard: true });
+    try {
+      const res = await axios.get(`${getApiUrl()}/api/games/leaderboard/paper-fall`);
+      if (res.data) {
+        set({ leaderboard: Array.isArray(res.data) ? res.data : [] });
+      }
+    } catch (err) {
+      console.warn('Failed to fetch paperfall leaderboard:', err);
+    } finally {
+      set({ isLoadingLeaderboard: false });
+    }
+  },
+
+  submitSinglePlayerScore: async (
+    userId,
+    score,
+    wordsTyped,
+    playTimeSeconds,
+    nickname,
+    avatar,
+    difficulty = 'MEDIUM',
+    wpm = 0,
+    accuracy = 100,
+    level = 1,
+  ) => {
+    if (!userId || userId === 'guest') return null;
+    const diffKey = difficulty.toUpperCase() as 'EASY' | 'MEDIUM' | 'HARD' | 'CAMPAIGN';
+
+    // Update local state first
+    set((prev) => {
+      const prevStats = prev.singlePlayerStats;
+      const prevByDiff = prevStats.byDifficulty || {
+        EASY: createDefaultDifficultyStats(),
+        MEDIUM: createDefaultDifficultyStats(),
+        HARD: createDefaultDifficultyStats(),
+        CAMPAIGN: createDefaultDifficultyStats(),
+      };
+      const curDiff = prevByDiff[diffKey] || createDefaultDifficultyStats();
+
+      const updatedDiff: DifficultyStats = {
+        highScore: Math.max(curDiff.highScore, score),
+        bestWpm: Math.max(curDiff.bestWpm, wpm),
+        wordsTyped: curDiff.wordsTyped + wordsTyped,
+        gamesPlayed: curDiff.gamesPlayed + 1,
+        bestAccuracy: Math.max(curDiff.bestAccuracy || 0, accuracy),
+        highestLevel: Math.max(curDiff.highestLevel || 1, level),
+      };
+
+      const updatedByDiff = {
+        ...prevByDiff,
+        [diffKey]: updatedDiff,
+      };
+
+      const totalGames = prevStats.gamesPlayed + 1;
+      const totalWords = prevStats.wordsTyped + wordsTyped;
+      const newHighScore = Math.max(prevStats.highScore, score);
+      const newBestWpm = Math.max(prevStats.bestWpm, wpm);
+
+      return {
+        singlePlayerStats: {
+          ...prevStats,
+          highScore: newHighScore,
+          gamesPlayed: totalGames,
+          wordsTyped: totalWords,
+          timeSurvivedSeconds: prevStats.timeSurvivedSeconds + playTimeSeconds,
+          bestWpm: newBestWpm,
+          averageAccuracy: Math.round(((prevStats.averageAccuracy * prevStats.gamesPlayed) + accuracy) / totalGames),
+          byDifficulty: updatedByDiff,
+        },
+      };
+    });
+
+    const currentStats = get().singlePlayerStats;
+    const defaultRewards = { highScore: Math.max(score, currentStats.highScore || 0) };
+
     try {
       const res = await axios.post(`${getApiUrl()}/api/games/save`, {
         userId,
         gameType: 'paper-fall',
-        score,
+        score: Math.max(score, currentStats.highScore),
         playTimeSeconds,
         nickname: nickname || 'Player',
         avatar,
+        extraStats: {
+          wordsTyped: currentStats.wordsTyped,
+          bestWpm: currentStats.bestWpm,
+          averageAccuracy: currentStats.averageAccuracy,
+          gamesPlayed: currentStats.gamesPlayed,
+          lastPlayedDifficulty: diffKey,
+          byDifficulty: currentStats.byDifficulty,
+        },
       });
+
       if (res.data) {
         get().fetchStats(userId);
+        get().fetchLeaderboard();
         return { highScore: res.data.highScore ?? defaultRewards.highScore };
       }
     } catch (err) {

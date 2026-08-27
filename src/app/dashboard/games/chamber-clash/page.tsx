@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, LogOut, Loader2, X, BookOpen, Volume2, VolumeX, ScrollText, UserPlus, Copy, Check, RotateCcw } from "lucide-react";
+import { Users, LogOut, Loader2, X, BookOpen, Volume2, VolumeX, ScrollText, UserPlus, Copy, Check, RotateCcw, ArrowLeft } from "lucide-react";
 import { useUserStore } from "@/store/useUserStore";
 import { useRoomConnectionStore } from "@/store/useRoomConnectionStore";
 import { useChamberClashStore, type ActionLogEntry } from "@/store/useChamberClashStore";
@@ -17,6 +18,8 @@ import { socketService } from "@/lib/socket";
 import { sounds } from "@/lib/sounds";
 import { getItemAnimConfig } from "@/components/games/chamber-clash/animationConfigs";
 import { PlayerHealthIndicator } from "@/components/games/chamber-clash/PlayerHealthIndicator";
+import { useGamePresence } from "@/hooks/useGamePresence";
+import GameChatDrawer from "@/components/games/common/GameChatDrawer";
 
 const ChamberClash3D = dynamic(() => import("@/components/games/chamber-clash/ChamberClash3D").then((m) => m.ChamberClash3D), { ssr: false });
 
@@ -53,6 +56,9 @@ function ChamberClashGameContent() {
     shootTarget, useItem, resolvePendingItem,
     setupListeners, dequeueEvent, setAnimating, addLogEntry, clearState, reportAssetsReady
   } = useChamberClashStore();
+
+  // Track active game presence when match is running
+  useGamePresence('CHAMBER_CLASH', Boolean(gameState), gameState?.gameId);
 
   // ─── Local UI State ───
   const [onlineUsers, setOnlineUsers] = useState<any[]>([]);
@@ -1113,15 +1119,31 @@ function ChamberClashGameContent() {
     const active = availableLobbies.filter(l => l.gameType === 'CHAMBER_CLASH');
     return (
       <div className="flex flex-col h-screen bg-[#050607] text-white p-4 space-y-6 overflow-y-auto">
-        <div className="flex justify-between items-center bg-white/[0.03] border border-white/[0.06] rounded-2xl p-4">
-          <div className="flex items-center gap-4">
-            <button onClick={() => router.push("/dashboard/games")} className="p-2 rounded-full hover:bg-white/10 transition-colors"><X className="w-5 h-5" /></button>
-            <h1 className="text-xl font-black tracking-wide">🔫 Chamber Clash</h1>
+        <div className="flex items-center justify-between p-4 bg-white/5 border-b border-white/10 flex-shrink-0 z-30 backdrop-blur-md rounded-2xl max-w-6xl mx-auto w-full">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <Link href="/dashboard/games" className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer" title="Back to Arcade">
+              <ArrowLeft className="w-5 h-5" />
+            </Link>
+            <Link href="/dashboard" className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
+              <img src="/ano-logo.png" alt="Ano Logo" className="w-8 h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
+              <span className="text-lg font-bold text-white tracking-wide">Ano</span>
+            </Link>
+            <div className="ml-1 sm:ml-2 border-l border-white/20 pl-3 sm:pl-4">
+              <h1 className="text-base sm:text-lg md:text-xl font-bold text-white flex items-center gap-2">
+                <span>🔫</span>
+                <span className="truncate">Chamber Clash</span>
+              </h1>
+            </div>
           </div>
-          <button onClick={() => setShowRules(true)} className="p-2 hover:bg-white/10 rounded-lg transition-colors flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200">
-            <BookOpen className="w-4 h-4" />
-            <span className="text-xs font-bold uppercase tracking-wider">Rules</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setShowRules(true)}
+              className="px-3.5 py-1.5 bg-white/5 border border-white/10 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors hover:bg-white/10 cursor-pointer"
+            >
+              <BookOpen className="w-4 h-4 text-red-400" />
+              <span className="hidden sm:inline">Rules</span>
+            </button>
+          </div>
         </div>
 
         <div className="max-w-4xl mx-auto w-full grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
@@ -1403,6 +1425,13 @@ function ChamberClashGameContent() {
             </div>
           </div>
         </div>
+
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={lobby.id}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar: useUserStore.getState().avatar }}
+          title="Lobby Chat"
+        />
 
         {/* Invite Modal */}
         {renderInviteModal()}
@@ -2108,6 +2137,13 @@ function ChamberClashGameContent() {
             .cc-table-wrapper { transform: scale(0.8); }
           }
         `}</style>
+        {/* In-Game Multiplayer Chat */}
+        <GameChatDrawer
+          gameId={gameState.gameId}
+          currentUser={{ id: userId || '', nickname: nickname || 'Player', avatar: useUserStore.getState().avatar }}
+          title="Match Chat"
+        />
+
         {renderRulesModal()}
       </div>
     );

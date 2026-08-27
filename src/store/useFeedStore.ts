@@ -45,15 +45,22 @@ export interface FeedComment {
   replies: FeedComment[];
 }
 
+export const FEED_PAGE_SIZE = 20;
+
+let activeAbortController: AbortController | null = null;
+
 interface FeedState {
   posts: FeedPost[];
   loading: boolean;
+  isLoadingMore: boolean;
   error: string | null;
-  page: number;
+  loadMoreError: string | null;
+  nextCursor: string | null;
   hasMore: boolean;
   activeTab: 'latest' | 'trending';
   activeTag: string | null;
   tags: string[];
+  feedGeneration: number;
 
   // Detail view
   currentPost: FeedPost | null;
@@ -65,6 +72,7 @@ interface FeedState {
   setActiveTag: (tag: string | null) => void;
   fetchPosts: (userId: string, reset?: boolean) => Promise<void>;
   loadMore: (userId: string) => Promise<void>;
+  retryLoadMore: (userId: string) => Promise<void>;
   fetchTags: () => Promise<void>;
   createPost: (data: {
     authorId: string;
@@ -96,22 +104,57 @@ interface FeedState {
 export const useFeedStore = create<FeedState>((set, get) => ({
   posts: [],
   loading: false,
+  isLoadingMore: false,
   error: null,
-  page: 1,
+  loadMoreError: null,
+  nextCursor: null,
   hasMore: true,
   activeTab: 'latest',
   activeTag: null,
   tags: [],
+  feedGeneration: 0,
   currentPost: null,
   comments: [],
   commentsLoading: false,
 
   setActiveTab: (tab) => {
-    set({ activeTab: tab, posts: [], page: 1, hasMore: true });
+    if (get().activeTab === tab) return;
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+    const nextGen = get().feedGeneration + 1;
+    set({
+      activeTab: tab,
+      posts: [],
+      nextCursor: null,
+      hasMore: true,
+      error: null,
+      loadMoreError: null,
+      loading: true,
+      isLoadingMore: false,
+      feedGeneration: nextGen,
+    });
   },
 
   setActiveTag: (tag) => {
-    set({ activeTag: tag, posts: [], page: 1, hasMore: true });
+    if (get().activeTag === tag) return;
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+    const nextGen = get().feedGeneration + 1;
+    set({
+      activeTag: tag,
+      posts: [],
+      nextCursor: null,
+      hasMore: true,
+      error: null,
+      loadMoreError: null,
+      loading: true,
+      isLoadingMore: false,
+      feedGeneration: nextGen,
+    });
   },
 
   fetchTags: async () => {
@@ -127,62 +170,106 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   },
 
   fetchPosts: async (userId, reset = true) => {
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+
+    const nextGen = get().feedGeneration + 1;
+    const controller = new AbortController();
+    activeAbortController = controller;
+
     const { activeTab, activeTag } = get();
     if (reset) {
-      set({ loading: true, error: null, page: 1 });
+      set({
+        loading: true,
+        isLoadingMore: false,
+        error: null,
+        loadMoreError: null,
+        posts: [],
+        nextCursor: null,
+        hasMore: true,
+        feedGeneration: nextGen,
+      });
+    } else {
+      set({ loading: true, error: null, feedGeneration: nextGen });
     }
 
     try {
       const params = new URLSearchParams({
         tab: activeTab,
-        page: '1',
-        limit: '20',
+        limit: String(FEED_PAGE_SIZE),
         userId,
       });
       if (activeTag) params.set('tag', activeTag);
 
-      const res = await fetch(`${API_URL}/api/feed?${params}`);
+      const res = await fetch(`${API_URL}/api/feed?${params}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Failed to fetch feed');
       const data = await res.json();
+
+      if (get().feedGeneration !== nextGen) return;
+
       set({
-        posts: data.posts,
-        hasMore: data.hasMore,
-        page: 1,
+        posts: data.posts || [],
+        nextCursor: data.nextCursor ?? null,
+        hasMore: Boolean(data.hasMore),
         loading: false,
+        isLoadingMore: false,
+        error: null,
       });
     } catch (err: any) {
-      set({ error: err.message, loading: false });
+      if (err.name === 'AbortError') return;
+      if (get().feedGeneration !== nextGen) return;
+      set({ error: err.message, loading: false, isLoadingMore: false });
     }
   },
 
   loadMore: async (userId) => {
-    const { activeTab, activeTag, page, hasMore, loading } = get();
-    if (!hasMore || loading) return;
+    const { activeTab, activeTag, nextCursor, hasMore, loading, isLoadingMore, feedGeneration } = get();
+    if (!hasMore || loading || isLoadingMore || !nextCursor) return;
 
-    set({ loading: true });
-    const nextPage = page + 1;
+    const currentGen = feedGeneration;
+    const controller = new AbortController();
+    activeAbortController = controller;
+
+    set({ isLoadingMore: true, loadMoreError: null });
 
     try {
       const params = new URLSearchParams({
         tab: activeTab,
-        page: String(nextPage),
-        limit: '20',
+        cursor: nextCursor,
+        limit: String(FEED_PAGE_SIZE),
         userId,
       });
       if (activeTag) params.set('tag', activeTag);
 
-      const res = await fetch(`${API_URL}/api/feed?${params}`);
+      const res = await fetch(`${API_URL}/api/feed?${params}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Failed to load more');
       const data = await res.json();
-      set((state) => ({
-        posts: [...state.posts, ...data.posts],
-        hasMore: data.hasMore,
-        page: nextPage,
-        loading: false,
-      }));
-    } catch {
-      set({ loading: false });
+
+      if (get().feedGeneration !== currentGen) return;
+
+      set((state) => {
+        const existingIds = new Set(state.posts.map((p) => p.id));
+        const uniqueIncoming = (data.posts || []).filter((p: FeedPost) => !existingIds.has(p.id));
+        return {
+          posts: [...state.posts, ...uniqueIncoming],
+          nextCursor: data.nextCursor ?? null,
+          hasMore: Boolean(data.hasMore),
+          isLoadingMore: false,
+          loadMoreError: null,
+        };
+      });
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
+      if (get().feedGeneration !== currentGen) return;
+      set({ isLoadingMore: false, loadMoreError: 'Could not load more posts' });
     }
+  },
+
+  retryLoadMore: async (userId) => {
+    set({ loadMoreError: null });
+    await get().loadMore(userId);
   },
 
   createPost: async (data) => {
@@ -390,11 +477,17 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   },
 
   clearFeed: () => {
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
     set({
       posts: [],
       loading: false,
+      isLoadingMore: false,
       error: null,
-      page: 1,
+      loadMoreError: null,
+      nextCursor: null,
       hasMore: true,
       currentPost: null,
       comments: [],

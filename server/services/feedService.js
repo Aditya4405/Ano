@@ -7,6 +7,29 @@ const AVAILABLE_TAGS = [
   'Tech', 'Off-Topic'
 ];
 
+function encodeCursor(cursorObj) {
+  if (!cursorObj) return null;
+  try {
+    return Buffer.from(JSON.stringify(cursorObj)).toString('base64url');
+  } catch (err) {
+    return null;
+  }
+}
+
+function decodeCursor(cursorStr) {
+  if (!cursorStr || typeof cursorStr !== 'string') return null;
+  try {
+    const json = Buffer.from(cursorStr, 'base64url').toString('utf8');
+    const parsed = JSON.parse(json);
+    if (parsed.createdAt) {
+      parsed.createdAt = new Date(parsed.createdAt);
+    }
+    return parsed;
+  } catch (err) {
+    return null;
+  }
+}
+
 const feedService = {
   /**
    * Create a new post.
@@ -38,59 +61,135 @@ const feedService = {
   },
 
   /**
-   * Get posts with pagination.
+   * Get posts with cursor-based or offset pagination.
    * tab: 'latest' | 'trending'
+   * cursor: base64url encoded cursor string
    * tag: optional filter
    */
-  async getPosts({ tab = 'latest', page = 1, limit = 20, tag, userId }) {
-    const skip = (page - 1) * limit;
+  async getPosts({ tab = 'latest', cursor: cursorParam, page, limit = 20, tag, userId }) {
+    // Enforce bounds: min 1, max 50
+    const takeLimit = Math.min(Math.max(parseInt(limit) || 20, 1), 50);
+    const decodedCursor = decodeCursor(cursorParam);
 
-    const where = {};
+    const andConditions = [];
+
     if (tag) {
-      where.tags = { has: tag };
+      andConditions.push({ tags: { has: tag } });
     }
 
     // Hide posts that are REJECTED or PENDING_MODERATION from other users
     if (userId) {
-      where.OR = [
-        { moderationStatus: { in: ['SAFE', 'SENSITIVE'] } },
-        { authorId: userId }
-      ];
+      andConditions.push({
+        OR: [
+          { moderationStatus: { in: ['SAFE', 'SENSITIVE'] } },
+          { authorId: userId }
+        ]
+      });
     } else {
-      where.moderationStatus = { in: ['SAFE', 'SENSITIVE'] };
+      andConditions.push({
+        moderationStatus: { in: ['SAFE', 'SENSITIVE'] }
+      });
     }
 
     let orderBy;
     if (tab === 'trending') {
-      // Trending: combination of score + recent activity
-      // We'll use raw query for trending, but for basic version use score + recency
-      orderBy = [{ score: 'desc' }, { commentCount: 'desc' }, { createdAt: 'desc' }];
+      orderBy = [
+        { score: 'desc' },
+        { commentCount: 'desc' },
+        { createdAt: 'desc' },
+        { id: 'desc' }
+      ];
+
+      if (decodedCursor && decodedCursor.score !== undefined && decodedCursor.createdAt && decodedCursor.id) {
+        andConditions.push({
+          OR: [
+            { score: { lt: decodedCursor.score } },
+            {
+              score: decodedCursor.score,
+              commentCount: { lt: decodedCursor.commentCount || 0 }
+            },
+            {
+              score: decodedCursor.score,
+              commentCount: decodedCursor.commentCount || 0,
+              createdAt: { lt: decodedCursor.createdAt }
+            },
+            {
+              score: decodedCursor.score,
+              commentCount: decodedCursor.commentCount || 0,
+              createdAt: decodedCursor.createdAt,
+              id: { lt: decodedCursor.id }
+            }
+          ]
+        });
+      }
     } else {
-      orderBy = { createdAt: 'desc' };
+      // Latest: strictly ordered by createdAt desc, id desc
+      orderBy = [
+        { createdAt: 'desc' },
+        { id: 'desc' }
+      ];
+
+      if (decodedCursor && decodedCursor.createdAt && decodedCursor.id) {
+        andConditions.push({
+          OR: [
+            { createdAt: { lt: decodedCursor.createdAt } },
+            {
+              createdAt: decodedCursor.createdAt,
+              id: { lt: decodedCursor.id }
+            }
+          ]
+        });
+      }
     }
 
-    const [posts, total] = await Promise.all([
-      prisma.post.findMany({
-        where,
-        orderBy,
-        skip,
-        take: limit,
-        include: {
-          author: {
-            select: { id: true, nickname: true, avatar: true },
-          },
-          votes: userId ? {
-            where: { userId },
-            select: { value: true },
-          } : false,
-          savedBy: userId ? {
-            where: { userId },
-            select: { id: true },
-          } : false,
+    const where = andConditions.length > 0 ? { AND: andConditions } : {};
+
+    // If no cursor is supplied but legacy page > 1 is requested, support offset
+    let skip = undefined;
+    if (!decodedCursor && page && parseInt(page) > 1) {
+      skip = (parseInt(page) - 1) * takeLimit;
+    }
+
+    const rawPosts = await prisma.post.findMany({
+      where,
+      orderBy,
+      ...(skip ? { skip } : {}),
+      take: takeLimit + 1,
+      include: {
+        author: {
+          select: { id: true, nickname: true, avatar: true },
         },
-      }),
-      prisma.post.count({ where }),
-    ]);
+        votes: userId ? {
+          where: { userId },
+          select: { value: true },
+        } : false,
+        savedBy: userId ? {
+          where: { userId },
+          select: { id: true },
+        } : false,
+      },
+    });
+
+    const hasMore = rawPosts.length > takeLimit;
+    const posts = hasMore ? rawPosts.slice(0, takeLimit) : rawPosts;
+    const lastPost = posts.length > 0 ? posts[posts.length - 1] : null;
+
+    let nextCursor = null;
+    if (hasMore && lastPost) {
+      if (tab === 'trending') {
+        nextCursor = encodeCursor({
+          score: lastPost.score,
+          commentCount: lastPost.commentCount,
+          createdAt: lastPost.createdAt,
+          id: lastPost.id,
+        });
+      } else {
+        nextCursor = encodeCursor({
+          createdAt: lastPost.createdAt,
+          id: lastPost.id,
+        });
+      }
+    }
 
     // Format posts: hide author info for anonymous posts
     const formatted = posts.map(post => {
@@ -125,9 +224,9 @@ const feedService = {
 
     return {
       posts: formatted,
-      total,
-      page,
-      hasMore: skip + limit < total,
+      nextCursor,
+      hasMore,
+      limit: takeLimit,
     };
   },
 

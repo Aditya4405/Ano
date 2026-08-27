@@ -5,6 +5,7 @@ import { useUserStore } from './useUserStore';
 export interface LobbyPlayer {
   userId: string;
   nickname: string;
+  avatar?: string;
   isReady: boolean;
   role: 'HOST' | 'PLAYER';
 }
@@ -29,6 +30,7 @@ export interface MemoryCard {
 export interface MemoryPlayerState {
   userId: string;
   nickname: string;
+  avatar?: string;
   role: 'HOST' | 'PLAYER';
   isReady: boolean;
   isOnline: boolean;
@@ -91,6 +93,7 @@ interface MemoryMatchStore {
   updateLobbySettings: (gameId: string, hostId: string, settings: any) => void;
   startGame: (gameId: string, hostId: string) => void;
   flipCard: (gameId: string, userId: string, cardIndex: number) => void;
+  playAgain: (gameId: string, userId: string) => void;
   clearState: () => void;
   setError: (msg: string | null) => void;
   fetchLobbies: () => void;
@@ -150,6 +153,11 @@ export const useMemoryMatchStore = create<MemoryMatchStore>((set, get) => ({
     socket.emit('game_action', { gameId, userId, action: 'flip_card', data: { cardIndex } });
   },
 
+  playAgain: (gameId, userId) => {
+    const socket = socketService.getSocket();
+    socket.emit('game_action', { gameId, userId, action: 'play_again' });
+  },
+
   clearState: () => set({ lobby: null, gameState: null, matchResult: null, error: null }),
   setError: (msg) => set({ error: msg }),
 
@@ -164,7 +172,20 @@ export const useMemoryMatchStore = create<MemoryMatchStore>((set, get) => ({
     const onLobbyState = (state: LobbyState) => {
       // Only listen to MEMORY_MATCH lobbies
       if (state.gameType && state.gameType !== 'MEMORY_MATCH') return;
-      set({ lobby: state, gameState: null });
+      const isUserInLobby = state.players?.some(p => p.userId === targetUserId);
+      if (isUserInLobby) {
+        set({ lobby: state, gameState: null });
+      } else {
+        const currentLobby = get().lobby;
+        if (currentLobby && currentLobby.id === state.id) {
+          set({ lobby: null, gameState: null });
+        }
+      }
+    };
+
+    const onLobbyClosed = (data?: { message?: string }) => {
+      set({ lobby: null, gameState: null, error: data?.message || 'Lobby has been closed.' });
+      setTimeout(() => set({ error: null }), 3000);
     };
 
     const onGameState = (state: MemoryMatchGameState) => {
@@ -217,6 +238,7 @@ export const useMemoryMatchStore = create<MemoryMatchStore>((set, get) => ({
 
     socket.on('connect', handleConnect);
     socket.on('lobby_state', onLobbyState);
+    socket.on('lobby_closed', onLobbyClosed);
     socket.on('game_state', onGameState);
     socket.on('memory_match_result', onMatchResult);
     socket.on('game_error', onGameError);
@@ -227,6 +249,7 @@ export const useMemoryMatchStore = create<MemoryMatchStore>((set, get) => ({
     return () => {
       socket.off('connect', handleConnect);
       socket.off('lobby_state', onLobbyState);
+      socket.off('lobby_closed', onLobbyClosed);
       socket.off('game_state', onGameState);
       socket.off('memory_match_result', onMatchResult);
       socket.off('game_error', onGameError);

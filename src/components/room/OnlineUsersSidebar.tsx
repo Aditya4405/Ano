@@ -8,8 +8,7 @@ import { useDMStore } from "@/store/useDMStore";
 import { useRouter } from "next/navigation";
 import { MessageSquare, ShieldCheck, UserPlus, ShieldAlert } from "lucide-react";
 import { UserAvatar } from "@/components/ui/UserAvatar";
-
-
+import { UserPresence } from "@/components/ui/UserPresence";
 
 interface OnlineUsersSidebarProps {
   roomId: string;
@@ -84,11 +83,14 @@ export function OnlineUsersSidebar({ roomId }: OnlineUsersSidebarProps) {
                 }`}
                 onClick={() => !isMe && handleStartDM(user.userId)}
               >
-                <UserAvatar
-                  src={user.avatar}
-                  nickname={user.nickname}
-                  size="w-8 h-8"
-                />
+                <div className="relative flex-shrink-0">
+                  <UserAvatar
+                    src={user.avatar}
+                    nickname={user.nickname}
+                    size="w-8 h-8"
+                  />
+                  <UserPresence userId={user.userId} variant="avatar-badge" size="xs" />
+                </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-white truncate flex items-center gap-1">
                     {user.nickname} {isMe && <span className="text-gray-400 text-xs">(You)</span>}
@@ -100,7 +102,7 @@ export function OnlineUsersSidebar({ roomId }: OnlineUsersSidebarProps) {
                       </span>
                     )}
                   </p>
-                  <p className="text-xs text-green-400">Online</p>
+                  <UserPresence userId={user.userId} variant="inline" />
                 </div>
                  {!isMe && (
                   <div className="flex gap-0.5">

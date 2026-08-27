@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useInviteCooldown } from '@/hooks/useInviteCooldown';
+import { useGamePresence } from '@/hooks/useGamePresence';
+import GameChatDrawer from '@/components/games/common/GameChatDrawer';
 
 type ActiveView = 'MENU' | 'SINGLEPLAYER' | 'MULTIPLAYER_LOBBY' | 'MULTIPLAYER_MATCH' | 'MATCH_RESULTS';
 
@@ -54,6 +56,7 @@ export function ArrowMazeGameHub() {
   const searchParams = useSearchParams();
   const roomCodeParam = searchParams?.get('room');
 
+
   const userId = useUserStore((s) => s.id) || 'guest';
   const nickname = useUserStore((s) => s.nickname) || 'Player';
   const avatar = useUserStore((s) => s.avatar);
@@ -71,6 +74,9 @@ export function ArrowMazeGameHub() {
   } = useArrowMazeStore();
 
   const [activeView, setActiveView] = useState<ActiveView>('MENU');
+
+  // Track active game presence (both solo & multiplayer match)
+  useGamePresence('ARROW_MAZE', activeView === 'SINGLEPLAYER' || activeView === 'MULTIPLAYER_MATCH', roomState?.id);
   const [gameStatus, setGameStatus] = useState<'idle' | 'playing' | 'paused' | 'levelComplete' | 'over'>('idle');
   const [currentLevel, setCurrentLevel] = useState(1);
   const [selectedDifficulty, setSelectedDifficulty] = useState<GameDifficulty>('EASY');
@@ -507,9 +513,7 @@ export function ArrowMazeGameHub() {
         )}
 
         <Link href="/dashboard" className="flex items-center gap-3 cursor-pointer group hover:opacity-80 transition-opacity">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform">
-            <MessageSquare className="w-4 h-4 text-white" />
-          </div>
+          <img src="/ano-logo.png" alt="Ano Logo" className="w-8 h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
           <span className="text-lg font-bold text-white tracking-wide">Ano</span>
         </Link>
 
@@ -1686,6 +1690,15 @@ export function ArrowMazeGameHub() {
       {activeView === 'MULTIPLAYER_LOBBY' && renderMultiplayerLobby()}
       {activeView === 'MULTIPLAYER_MATCH' && renderMultiplayerMatch()}
       {activeView === 'MATCH_RESULTS' && renderMatchResults()}
+
+      {/* In-Game Multiplayer Chat */}
+      {roomState && (activeView === 'MULTIPLAYER_LOBBY' || activeView === 'MULTIPLAYER_MATCH' || activeView === 'MATCH_RESULTS') && (
+        <GameChatDrawer
+          gameId={roomState.id}
+          currentUser={{ id: userId, nickname, avatar: useUserStore.getState().avatar }}
+          title={activeView === 'MULTIPLAYER_LOBBY' ? 'Lobby Chat' : 'Match Chat'}
+        />
+      )}
     </div>
   );
 }

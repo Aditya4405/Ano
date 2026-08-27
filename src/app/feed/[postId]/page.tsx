@@ -10,6 +10,7 @@ import { CommentThread } from "@/components/feed/CommentThread";
 import { CommentInput } from "@/components/feed/CommentInput";
 import { SafeMedia } from "@/components/ui/SafeMedia";
 import { UserAvatar } from "@/components/ui/UserAvatar";
+import { DeletePostModal } from "@/components/feed/DeletePostModal";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -38,11 +39,14 @@ function timeAgo(dateStr: string): string {
 }
 
 export default function PostDetailPage() {
-  const router = useRouter();
   const params = useParams();
   const postId = params.postId as string;
+  const router = useRouter();
+
   const userId = useUserStore((s) => s.id);
   const [copied, setCopied] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const {
     currentPost: post,
@@ -82,10 +86,18 @@ export default function PostDetailPage() {
     }
   };
 
-  const handleDelete = async () => {
+  const handleConfirmDelete = async () => {
     if (!userId || !post) return;
-    const success = await deletePost(post.id, userId);
-    if (success) router.push("/feed");
+    setIsDeleting(true);
+    try {
+      const success = await deletePost(post.id, userId);
+      if (success) {
+        router.push("/feed");
+      }
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+    }
   };
 
   const handleAddComment = async (content: string, isAnonymous: boolean) => {
@@ -211,7 +223,8 @@ export default function PostDetailPage() {
                     <SafeMedia
                       src={post.imageUrl}
                       alt="Post image"
-                      className="w-full max-h-[500px] object-contain bg-black/20"
+                      className="w-full flex items-center justify-center bg-black/40 rounded-xl"
+                      mediaClassName="w-full h-auto max-h-[700px] object-contain rounded-xl"
                       moderationStatus={post.moderationStatus}
                       nudityScore={post.nudityScore}
                       goreScore={post.goreScore}
@@ -275,8 +288,8 @@ export default function PostDetailPage() {
 
                 {isOwner && (
                   <button
-                    onClick={handleDelete}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-red-400 hover:bg-red-500/10 transition-colors border border-white/5 bg-white/5 hover:border-red-500/20 ml-auto"
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-red-400 hover:bg-red-500/10 transition-colors border border-white/5 bg-white/5 hover:border-red-500/20 ml-auto cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     Delete
@@ -315,6 +328,13 @@ export default function PostDetailPage() {
           </motion.div>
         </div>
       </main>
+
+      <DeletePostModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleConfirmDelete}
+        isDeleting={isDeleting}
+      />
     </div>
   );
 }

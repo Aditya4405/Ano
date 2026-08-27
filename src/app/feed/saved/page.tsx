@@ -7,19 +7,18 @@ import { useUserStore } from "@/store/useUserStore";
 import { useFeedStore, FeedPost } from "@/store/useFeedStore";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { PostCard } from "@/components/feed/PostCard";
+import { PostSkeleton } from "@/components/feed/PostSkeleton";
 import { motion } from "framer-motion";
 import { ArrowLeft, Bookmark, Loader2 } from "lucide-react";
-
-
 
 export default function SavedPostsPage() {
   const router = useRouter();
   const userId = useUserStore((s) => s.id);
-  const nsfwMode = useUserStore((s) => s.nsfwMode);
   const { voteOnPost, unsavePost } = useFeedStore();
   const [isClient, setIsClient] = useState(false);
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -34,18 +33,29 @@ export default function SavedPostsPage() {
 
   const fetchSaved = useCallback(async (p: number, reset = false) => {
     if (!userId) return;
-    setLoading(true);
+    if (reset) {
+      setLoading(true);
+    } else {
+      setIsLoadingMore(true);
+    }
+
     try {
       const res = await fetch(`${API_URL}/api/feed/saved/${userId}?page=${p}&limit=20`);
       if (!res.ok) throw new Error();
       const data = await res.json();
-      setPosts((prev) => (reset ? data.posts : [...prev, ...data.posts]));
-      setHasMore(data.hasMore);
+      setPosts((prev) => {
+        if (reset) return data.posts;
+        const existingIds = new Set(prev.map(item => item.id));
+        const newItems = (data.posts || []).filter((item: FeedPost) => !existingIds.has(item.id));
+        return [...prev, ...newItems];
+      });
+      setHasMore(Boolean(data.hasMore));
       setPage(p);
     } catch {
       // silent
     } finally {
       setLoading(false);
+      setIsLoadingMore(false);
     }
   }, [userId]);
 
@@ -55,17 +65,23 @@ export default function SavedPostsPage() {
 
   // Infinite scroll
   useEffect(() => {
+    if (!hasMore || loading) return;
+
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loading) {
+        if (entries[0].isIntersecting && hasMore && !loading && !isLoadingMore) {
           fetchSaved(page + 1);
         }
       },
-      { threshold: 0.5 }
+      {
+        root: null,
+        rootMargin: "600px",
+        threshold: 0.1,
+      }
     );
     if (sentinelRef.current) observer.observe(sentinelRef.current);
     return () => observer.disconnect();
-  }, [hasMore, loading, page, fetchSaved]);
+  }, [hasMore, loading, isLoadingMore, page, fetchSaved]);
 
   const handleUnsave = async (postId: string) => {
     if (!userId) return;
@@ -100,6 +116,13 @@ export default function SavedPostsPage() {
           </motion.div>
 
           <div className="space-y-3">
+            {loading && posts.length === 0 && (
+              <div className="space-y-3">
+                <PostSkeleton />
+                <PostSkeleton />
+              </div>
+            )}
+
             {!loading && posts.length === 0 && (
               <div className="text-center py-16 bg-white/5 rounded-xl border border-white/10">
                 <Bookmark className="w-10 h-10 text-gray-600 mx-auto mb-3" />
@@ -107,22 +130,28 @@ export default function SavedPostsPage() {
               </div>
             )}
 
-            {posts
-              .map((post) => (
-                <PostCard
-                  key={post.id}
-                  post={{ ...post, isSaved: true }}
-                  onVote={(pid, val) => voteOnPost(userId, pid, val)}
-                  onSave={() => {}}
-                  onUnsave={handleUnsave}
-                />
-              ))}
+            {posts.map((post) => (
+              <PostCard
+                key={post.id}
+                post={{ ...post, isSaved: true }}
+                onVote={(pid, val) => voteOnPost(userId, pid, val)}
+                onSave={() => {}}
+                onUnsave={handleUnsave}
+              />
+            ))}
 
-            <div ref={sentinelRef} className="h-4" />
+            {hasMore && <div ref={sentinelRef} className="h-6 -mt-3 pointer-events-none" />}
 
-            {loading && (
-              <div className="flex justify-center py-6">
-                <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
+            {isLoadingMore && (
+              <div className="flex items-center justify-center gap-2 py-6 text-xs text-gray-400 font-medium select-none">
+                <Loader2 className="w-4 h-4 text-yellow-400 animate-spin" />
+                <span>Loading more saved posts...</span>
+              </div>
+            )}
+
+            {!hasMore && posts.length > 0 && !loading && (
+              <div className="text-center py-8 text-xs text-gray-500 font-medium select-none">
+                End of saved posts
               </div>
             )}
           </div>

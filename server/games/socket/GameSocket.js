@@ -9,7 +9,9 @@ const ChamberClashEngine = require('../chamber-clash/ChamberClashEngine');
 const FlappyBirdEngine = require('../flappy-bird/FlappyBirdEngine');
 const PaperFallEngine = require('../paper-fall/PaperFallEngine');
 const ArrowMazeEngine = require('../arrow-maze/ArrowMazeEngine');
+const UltimateTicTacToeEngine = require('../ultimate-tic-tac-toe/UltimateTicTacToeEngine');
 const userService = require('../../services/userService');
+const presenceService = require('../../services/presenceService');
 
 const ENGINE_MAP = {
   'BLUFF': BluffEngine,
@@ -22,32 +24,15 @@ const ENGINE_MAP = {
   'FLAPPY_BIRD': FlappyBirdEngine,
   'PAPER_FALL': PaperFallEngine,
   'ARROW_MAZE': ArrowMazeEngine,
+  'ULTIMATE_TIC_TAC_TOE': UltimateTicTacToeEngine,
 };
 
-const GAME_DISPLAY_NAMES = {
-  'BLUFF': 'Bluff',
-  'MEMORY_MATCH': 'Memory Match',
-  'DOTS_AND_BOXES': 'Dots and Boxes',
-  'COLOR_WARS': 'Color Wars',
-  'SCRIBBLE': 'Scribble',
-  'INK_DECEPTION': 'Ink & Deception',
-  'CHAMBER_CLASH': 'Chamber Clash',
-  'FLAPPY_BIRD': 'Flappy Bird',
-  'PAPER_FALL': 'PaperFall',
-  'ARROW_MAZE': 'Arrow Maze',
-};
+const GAME_DISPLAY_NAMES = presenceService.GAME_DISPLAY_NAMES;
+
+// In-memory chat message buffer for active game lobbies and matches (gameId -> Message[])
+const gameChatMessages = new Map();
 
 function registerGameSockets(io, socket, onlineUsers, activeGames) {
-  // Helper to update and broadcast user presence changes
-  const updatePresence = async (userId, presenceStatus) => {
-    try {
-      await userService.updatePresenceStatus(userId, presenceStatus);
-      io.emit('user_presence_change', { userId, presenceStatus });
-    } catch (err) {
-      console.error('Failed to update presence:', err.message);
-    }
-  };
-
   // Helper to serialize lobby map for client
   const serializeLobby = (lobby) => {
     if (!lobby) return null;
@@ -85,27 +70,51 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
   socket.on('lobby_create', async ({ gameType, userId, nickname }) => {
     console.log(`Lobby create requested by ${nickname} (${userId}) for ${gameType}`);
     const gameId = `game_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const lobby = await LobbyService.createLobby(gameId, userId, nickname, gameType);
+    const { lobby, affectedLobbies } = await LobbyService.createLobby(gameId, userId, nickname, gameType);
 
-    socket.join(gameId);
-    socket.emit('lobby_state', serializeLobby(lobby));
-    io.to(gameId).emit('lobby_state', serializeLobby(lobby));
-    await updatePresence(userId, `In ${GAME_DISPLAY_NAMES[gameType] || gameType} Lobby`);
-    broadcastLobbies();
-  });
-
-  socket.on('lobby_join', async ({ gameId, userId, nickname }) => {
-    console.log(`Player ${nickname} joined lobby ${gameId}`);
-
-    const lobby = await LobbyService.joinLobby(gameId, userId, nickname);
-    if (!lobby) {
-      return socket.emit('game_error', { message: 'Lobby full or does not exist.' });
+    // Notify any previous lobbies that the user left
+    if (affectedLobbies && affectedLobbies.length > 0) {
+      for (const affected of affectedLobbies) {
+        socket.leave(affected.lobbyId);
+        if (affected.deleted) {
+          io.to(affected.lobbyId).emit('lobby_closed', { message: 'Host left or closed the lobby.' });
+        } else if (affected.lobby) {
+          io.to(affected.lobbyId).emit('lobby_state', serializeLobby(affected.lobby));
+        }
+      }
     }
 
     socket.join(gameId);
     socket.emit('lobby_state', serializeLobby(lobby));
     io.to(gameId).emit('lobby_state', serializeLobby(lobby));
-    await updatePresence(userId, `In ${GAME_DISPLAY_NAMES[lobby.gameType] || lobby.gameType} Lobby`);
+    await presenceService.setOnline(userId, socket.id);
+    broadcastLobbies();
+  });
+
+  socket.on('lobby_join', async ({ gameId, userId, nickname }) => {
+    console.log(`Player ${nickname} (${userId}) joined lobby ${gameId}`);
+
+    const { lobby, affectedLobbies } = await LobbyService.joinLobby(gameId, userId, nickname);
+    if (!lobby) {
+      return socket.emit('game_error', { message: 'Lobby is full or no longer exists.' });
+    }
+
+    // Leave any previous socket rooms for affected lobbies and notify them
+    if (affectedLobbies && affectedLobbies.length > 0) {
+      for (const affected of affectedLobbies) {
+        socket.leave(affected.lobbyId);
+        if (affected.deleted) {
+          io.to(affected.lobbyId).emit('lobby_closed', { message: 'Host left or closed the lobby.' });
+        } else if (affected.lobby) {
+          io.to(affected.lobbyId).emit('lobby_state', serializeLobby(affected.lobby));
+        }
+      }
+    }
+
+    socket.join(gameId);
+    socket.emit('lobby_state', serializeLobby(lobby));
+    io.to(gameId).emit('lobby_state', serializeLobby(lobby));
+    await presenceService.setOnline(userId, socket.id);
     broadcastLobbies();
   });
 
@@ -153,11 +162,14 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     console.log(`Player ${userId} leaving lobby ${gameId}`);
     const lobby = await LobbyService.leaveLobby(gameId, userId);
     socket.leave(gameId);
-    await updatePresence(userId, null);
+    await presenceService.clearPlaying(userId, socket.id, gameId);
 
     if (lobby) {
       io.to(gameId).emit('lobby_state', serializeLobby(lobby));
+    } else {
+      io.to(gameId).emit('lobby_closed', { message: 'Lobby has been closed.' });
     }
+    broadcastLobbies();
     
     // Also remove from active game if playing
     const engine = activeGames.get(gameId);
@@ -219,6 +231,43 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
   });
 
   // ========================
+  // IN-GAME MULTIPLAYER CHAT
+  // ========================
+
+  socket.on('game_chat_send', ({ gameId, userId, nickname, avatar, text }) => {
+    if (!gameId || !userId || !text || typeof text !== 'string') return;
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length > 500) return;
+
+    const message = {
+      id: `gmsg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      gameId,
+      senderId: userId,
+      senderName: nickname || 'Player',
+      senderAvatar: avatar || null,
+      text: trimmed,
+      timestamp: Date.now(),
+      system: false
+    };
+
+    if (!gameChatMessages.has(gameId)) {
+      gameChatMessages.set(gameId, []);
+    }
+    const history = gameChatMessages.get(gameId);
+    history.push(message);
+    if (history.length > 100) history.shift();
+
+    // Broadcast to everyone currently in the lobby / match room
+    io.to(gameId).emit('game_chat_message', message);
+  });
+
+  socket.on('game_chat_get_history', ({ gameId }) => {
+    if (!gameId) return;
+    const history = gameChatMessages.get(gameId) || [];
+    socket.emit('game_chat_history', { gameId, messages: history });
+  });
+
+  // ========================
   // GAME CONTROL EVENTS
   // ========================
 
@@ -254,6 +303,16 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     let engine = new EngineClass(gameId);
     engine.onEvent = (type, data) => {
       io.to(gameId).emit(type, data);
+
+      // Automatically update presence to spectator on player elimination
+      if (type === 'player_eliminated' && data && data.playerId) {
+        presenceService.setPlaying(data.playerId, null, {
+          gameId,
+          gameType: engine.gameType,
+          isSpectating: true
+        }).catch(console.error);
+      }
+
       // Auto-sync game state on critical events to prevent desyncs (e.g. on timeouts or skip turns)
       const SYNC_EVENTS = ['round_started', 'turn_started', 'player_damaged', 'player_healed', 'player_eliminated', 'game_started', 'round_finished', 'status_added', 'status_removed', 'extra_turn_granted', 'shell_inverted', 'shell_ejected', 'item_stolen'];
       if (SYNC_EVENTS.includes(type)) {
@@ -292,7 +351,13 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     broadcastLobbies();
 
     for (const p of playersList) {
-      await updatePresence(p.userId, `Playing ${GAME_DISPLAY_NAMES[lobby.gameType] || lobby.gameType}`);
+      const userSockets = onlineUsers.get(p.userId);
+      const playerSocketId = userSockets ? Array.from(userSockets)[0] : null;
+      await presenceService.setPlaying(p.userId, playerSocketId, {
+        gameId,
+        gameType: lobby.gameType,
+        isSpectating: false
+      });
     }
 
     broadcastGameStates(gameId, engine);
@@ -332,39 +397,61 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
 
     if (action === 'play_again' && engine.status === 'FINISHED') {
-      const hostP = Array.from(engine.players.values()).find(p => p.role === 'HOST');
-      if (hostP && hostP.userId === userId) {
-        // Re-create lobby with same ID and current players
-        const LobbyService = require('../lobby/LobbyService');
-        LobbyService.lobbies.set(gameId, {
-          id: gameId,
-          gameType: engine.gameType,
-          hostId: userId,
-          hostName: hostP.nickname,
-          players: new Map(Array.from(engine.players.values()).map(p => [
-            p.userId,
-            {
-              userId: p.userId,
-              nickname: p.nickname,
-              role: p.role,
-              isReady: p.role === 'HOST'
-            }
-          ])),
-          settings: engine.settings,
-          status: 'WAITING',
-          createdAt: new Date(),
-          maxPlayers: engine.gameType === 'SCRIBBLE' ? 12 : 8,
-          isPrivate: engine.settings.isPrivate || false
-        });
-        
-        activeGames.delete(gameId);
-        io.to(gameId).emit('lobby_state', serializeLobby(LobbyService.lobbies.get(gameId)));
-        
-        broadcastLobbies();
-        return;
-      } else {
-        return socket.emit('game_error', { message: 'Only host can restart the game' });
+      const isParticipant = engine.players.has(userId);
+      if (!isParticipant) {
+        return socket.emit('game_error', { message: 'You are not a participant in this game.' });
       }
+
+      const hostP = Array.from(engine.players.values()).find(p => p.role === 'HOST') || Array.from(engine.players.values())[0];
+      const hostId = hostP ? hostP.userId : userId;
+      const hostName = hostP ? hostP.nickname : (engine.players.get(userId)?.nickname || 'Host');
+
+      // Re-create lobby with same ID and current players
+      const LobbyService = require('../lobby/LobbyService');
+      const newLobby = {
+        id: gameId,
+        gameType: engine.gameType,
+        hostId: hostId,
+        hostName: hostName,
+        players: new Map(Array.from(engine.players.values()).map(p => [
+          p.userId,
+          {
+            userId: p.userId,
+            nickname: p.nickname,
+            role: p.userId === hostId ? 'HOST' : 'PLAYER',
+            isReady: p.userId === hostId
+          }
+        ])),
+        settings: engine.settings,
+        status: 'WAITING',
+        createdAt: new Date(),
+        maxPlayers: engine.gameType === 'SCRIBBLE' ? 12 : (engine.gameType === 'ULTIMATE_TIC_TAC_TOE' ? 2 : 8),
+        isPrivate: engine.settings?.isPrivate || false
+      };
+
+      LobbyService.lobbies.set(gameId, newLobby);
+      activeGames.delete(gameId);
+
+      // Clear playing presence for all players in this game
+      engine.players.forEach((p, pId) => {
+        presenceService.clearPlaying(pId, null, gameId).catch(console.error);
+      });
+
+      const serialized = serializeLobby(newLobby);
+      io.to(gameId).emit('lobby_state', serialized);
+
+      // Also directly emit to all participant sockets to ensure delivery
+      engine.players.forEach((p, pId) => {
+        const sockets = onlineUsers.get(pId);
+        if (sockets) {
+          sockets.forEach(sId => {
+            io.to(sId).emit('lobby_state', serialized);
+          });
+        }
+      });
+
+      broadcastLobbies();
+      return;
     }
 
     const res = engine.handlePlayerAction(userId, action, data);
@@ -406,7 +493,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     if (engine.status === 'FINISHED' && engine.gameType !== 'SCRIBBLE') {
       setTimeout(() => {
         engine.players.forEach(p => {
-          updatePresence(p.userId, null).catch(console.error);
+          presenceService.clearPlaying(p.userId, null, gameId).catch(console.error);
         });
         activeGames.delete(gameId);
       }, 5000);
@@ -517,7 +604,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
   });
 
-  socket.on('game_reconnect', ({ gameId, userId }) => {
+  socket.on('game_reconnect', async ({ gameId, userId }) => {
     const engine = activeGames.get(gameId);
     if (!engine) {
       return socket.emit('game_error', { message: 'Game session not found or finished.' });
@@ -534,10 +621,16 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
       socket.emit('game_state', engine.serializeState(userId));
       io.to(gameId).emit('player_reconnected', { userId, nickname: player.nickname });
       broadcastGameStates(gameId, engine);
+
+      await presenceService.setPlaying(userId, socket.id, {
+        gameId,
+        gameType: engine.gameType,
+        isSpectating: player.isAlive === false
+      });
     }
   });
 
-  socket.on('game_spectate', ({ gameId, userId }) => {
+  socket.on('game_spectate', async ({ gameId, userId }) => {
     const engine = activeGames.get(gameId);
     if (!engine) {
       return socket.emit('game_error', { message: 'Game session not found.' });
@@ -546,6 +639,12 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     engine.spectators.add(userId);
     socket.join(gameId);
     socket.emit('game_state', engine.serializeState(null));
+
+    await presenceService.setPlaying(userId, socket.id, {
+      gameId,
+      gameType: engine.gameType,
+      isSpectating: true
+    });
   });
 
   // ========================
@@ -603,12 +702,14 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     return lobby;
   };
 
-  socket.on('flappy_return_to_lobby', ({ gameId, userId }) => {
+  socket.on('flappy_return_to_lobby', async ({ gameId, userId }) => {
     const engine = activeGames.get(gameId);
     if (engine && typeof engine.handleReturnToLobby === 'function') {
       engine.handleReturnToLobby(userId);
       broadcastGameStates(gameId, engine);
     }
+
+    await presenceService.clearPlaying(userId, socket.id, gameId);
 
     // Only restore the lobby when the game is actually finished
     // If game is still in progress (other players alive), don't create a lobby yet
@@ -629,13 +730,18 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
   });
 
-  socket.on('flappy_reset_lobby', ({ gameId }) => {
+  socket.on('flappy_reset_lobby', async ({ gameId }) => {
     const engine = activeGames.get(gameId);
     const lobby = restoreLobbyFromEngine(gameId, engine);
 
-    if (engine && typeof engine.resetToLobby === 'function') {
-      const newState = engine.resetToLobby();
-      io.to(gameId).emit('game_state', newState);
+    if (engine) {
+      engine.players.forEach(p => {
+        presenceService.clearPlaying(p.userId, null, gameId).catch(console.error);
+      });
+      if (typeof engine.resetToLobby === 'function') {
+        const newState = engine.resetToLobby();
+        io.to(gameId).emit('game_state', newState);
+      }
     }
 
     if (lobby) {
@@ -674,11 +780,13 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
   });
 
-  socket.on('paperfall_return_to_lobby', ({ gameId, userId }) => {
+  socket.on('paperfall_return_to_lobby', async ({ gameId, userId }) => {
     const engine = activeGames.get(gameId);
     if (engine && engine.gameType === 'PAPER_FALL') {
       engine.handlePlayerAction(userId, 'return_to_lobby', {});
     }
+
+    await presenceService.clearPlaying(userId, socket.id, gameId);
 
     if (!engine || engine.status === 'FINISHED') {
       const lobby = restoreLobbyFromEngine(gameId, engine);
@@ -696,9 +804,15 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
   });
 
-  socket.on('paperfall_reset_lobby', ({ gameId }) => {
+  socket.on('paperfall_reset_lobby', async ({ gameId }) => {
     const engine = activeGames.get(gameId);
     const lobby = restoreLobbyFromEngine(gameId, engine);
+
+    if (engine) {
+      engine.players.forEach(p => {
+        presenceService.clearPlaying(p.userId, null, gameId).catch(console.error);
+      });
+    }
 
     if (lobby) {
       for (const p of lobby.players.values()) {
@@ -743,11 +857,13 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
   });
 
-  socket.on('arrowmaze_return_to_lobby', ({ gameId, userId }) => {
+  socket.on('arrowmaze_return_to_lobby', async ({ gameId, userId }) => {
     const engine = activeGames.get(gameId);
     if (engine && engine.gameType === 'ARROW_MAZE') {
       engine.handlePlayerAction(userId, 'return_to_lobby', {});
     }
+
+    await presenceService.clearPlaying(userId, socket.id, gameId);
 
     if (!engine || engine.status === 'FINISHED') {
       const lobby = restoreLobbyFromEngine(gameId, engine);
@@ -765,9 +881,15 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
   });
 
-  socket.on('arrowmaze_reset_lobby', ({ gameId }) => {
+  socket.on('arrowmaze_reset_lobby', async ({ gameId }) => {
     const engine = activeGames.get(gameId);
     const lobby = restoreLobbyFromEngine(gameId, engine);
+
+    if (engine) {
+      engine.players.forEach(p => {
+        presenceService.clearPlaying(p.userId, null, gameId).catch(console.error);
+      });
+    }
 
     if (lobby) {
       for (const p of lobby.players.values()) {
