@@ -10,6 +10,7 @@ const FlappyBirdEngine = require('../flappy-bird/FlappyBirdEngine');
 const PaperFallEngine = require('../paper-fall/PaperFallEngine');
 const ArrowMazeEngine = require('../arrow-maze/ArrowMazeEngine');
 const UltimateTicTacToeEngine = require('../ultimate-tic-tac-toe/UltimateTicTacToeEngine');
+const DemolitionDerbyEngine = require('../demolition-derby/DemolitionDerbyEngine');
 const userService = require('../../services/userService');
 
 const ENGINE_MAP = {
@@ -24,6 +25,7 @@ const ENGINE_MAP = {
   'PAPER_FALL': PaperFallEngine,
   'ARROW_MAZE': ArrowMazeEngine,
   'ULTIMATE_TIC_TAC_TOE': UltimateTicTacToeEngine,
+  'DEMOLITION_DERBY': DemolitionDerbyEngine,
 };
 
 const GAME_DISPLAY_NAMES = {
@@ -38,6 +40,7 @@ const GAME_DISPLAY_NAMES = {
   'PAPER_FALL': 'PaperFall',
   'ARROW_MAZE': 'Arrow Maze',
   'ULTIMATE_TIC_TAC_TOE': 'Ultimate Tic-Tac-Toe',
+  'DEMOLITION_DERBY': 'Demolition Derby',
 };
 
 function registerGameSockets(io, socket, onlineUsers, activeGames) {
@@ -769,6 +772,61 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
   });
 
   socket.on('arrowmaze_reset_lobby', ({ gameId }) => {
+    const engine = activeGames.get(gameId);
+    const lobby = restoreLobbyFromEngine(gameId, engine);
+
+    if (lobby) {
+      for (const p of lobby.players.values()) {
+        p.isReady = p.role === 'HOST';
+      }
+      io.to(gameId).emit('lobby_state', serializeLobby(lobby));
+    }
+
+    activeGames.delete(gameId);
+    broadcastLobbies();
+  });
+
+  // ========================
+  // DEMOLITION DERBY SPECIFIC SOCKET EVENTS
+  // ========================
+
+  socket.on('derby_transform_update', ({ gameId, userId, ...data }) => {
+    const engine = activeGames.get(gameId);
+    if (engine && engine.gameType === 'DEMOLITION_DERBY') {
+      engine.handlePlayerAction(userId, 'transform_update', data);
+    }
+  });
+
+  socket.on('derby_hit_impact', ({ gameId, userId, ...data }) => {
+    const engine = activeGames.get(gameId);
+    if (engine && engine.gameType === 'DEMOLITION_DERBY') {
+      engine.handlePlayerAction(userId, 'hit_impact', data);
+    }
+  });
+
+  socket.on('derby_return_to_lobby', ({ gameId, userId }) => {
+    const engine = activeGames.get(gameId);
+    if (engine && engine.gameType === 'DEMOLITION_DERBY') {
+      engine.handlePlayerAction(userId, 'return_to_lobby', {});
+    }
+
+    if (!engine || engine.status === 'FINISHED') {
+      const lobby = restoreLobbyFromEngine(gameId, engine);
+      if (lobby) {
+        const player = lobby.players.get(userId);
+        if (player && player.role !== 'HOST') {
+          player.isReady = false;
+        }
+        socket.join(gameId);
+        io.to(gameId).emit('lobby_state', serializeLobby(lobby));
+        broadcastLobbies();
+      }
+    } else {
+      socket.join(gameId);
+    }
+  });
+
+  socket.on('derby_reset_lobby', ({ gameId }) => {
     const engine = activeGames.get(gameId);
     const lobby = restoreLobbyFromEngine(gameId, engine);
 

@@ -5,6 +5,7 @@ import { Minesweeper } from '@/components/games/Minesweeper';
 import { PaperFallGameHub } from '@/components/games/paper-fall/PaperFallGameHub';
 import { ArrowMazeGameHub } from '@/components/games/arrow-maze/ArrowMazeGameHub';
 import { UltimateTicTacToeGameHub } from '@/components/games/ultimate-tic-tac-toe/UltimateTicTacToeGameHub';
+import { DemolitionDerbyGameHub } from '@/components/games/demolition-derby/DemolitionDerbyGameHub';
 
 export type GameSupportedMode = 'SOLO' | 'MULTIPLAYER' | 'BOTH';
 
@@ -218,6 +219,21 @@ export const GAMES_REGISTRY: Record<string, GameDefinition> = {
     type: 'multiplayer',
     href: '/dashboard/games/ultimate-tic-tac-toe',
     component: UltimateTicTacToeGameHub
+  },
+  'demolition-derby': {
+    id: 'demolition-derby',
+    name: 'Demolition Derby',
+    title: 'Demolition Derby',
+    slug: 'demolition-derby',
+    description: 'Chaotic 3D vehicular combat arcade derby! Crash into opponents, deal damage, survive 7 campaign arenas, and challenge real players in multiplayer.',
+    icon: '🏎️',
+    color: 'from-amber-600 via-red-600 to-zinc-900',
+    supportedModes: 'BOTH',
+    enabled: true,
+    displayOrder: 14,
+    type: 'multiplayer',
+    href: '/dashboard/games/demolition-derby',
+    component: DemolitionDerbyGameHub
   }
 };
 
