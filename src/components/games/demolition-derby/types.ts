@@ -13,7 +13,16 @@ export type AIState =
   | 'TARGET_WEAK_PLAYER'
   | 'DESTROYED';
 
-export type VehicleId = 'starter' | 'muscle' | 'heavy' | 'rally' | 'armored';
+export type VehicleId =
+  | 'road_crusher'
+  | 'iron_tanker'
+  | 'apex_phantom'
+  | 'armored_juggernaut'
+  | 'starter'
+  | 'muscle'
+  | 'heavy'
+  | 'rally'
+  | 'armored';
 
 export interface VehicleStats {
   speed: number;        // 1-100
@@ -21,7 +30,7 @@ export interface VehicleStats {
   handling: number;     // 1-100
   armor: number;        // 1-100
   ram: number;          // 1-100
-  weight: number;       // kg modifier (1000 - 2600)
+  weight: number;       // kg modifier (1000 - 3400)
 }
 
 export interface VehicleUpgrades {
@@ -56,6 +65,14 @@ export type ArenaId =
   | 'arena_6'
   | 'arena_7';
 
+export interface ArenaSpawnPoint {
+  x: number;
+  z: number;
+  rotationY: number;
+}
+
+export type ArenaBoundaryType = 'oval' | 'box' | 'circle';
+
 export interface ArenaDefinition {
   id: ArenaId;
   index: number;
@@ -63,8 +80,12 @@ export interface ArenaDefinition {
   environment: string;
   difficultyTag: 'Easy' | 'Easy / Medium' | 'Medium' | 'Medium / Difficult' | 'Difficult';
   description: string;
+  features?: string[];
   surfaceFriction: number; // 1.0 standard, 0.45 ice
   radius: number;          // World radius units
+  boundaryType: ArenaBoundaryType;
+  boundaryHalfA: number;   // X half-extent (e.g. 44m)
+  boundaryHalfB: number;   // Z half-extent (e.g. 32m)
   obstacleType: 'open' | 'tight' | 'ramp' | 'slippery' | 'obstacles';
   groundColor: string;
   skyColor: string;
@@ -72,6 +93,16 @@ export interface ArenaDefinition {
   fogColor: string;
   hasRamps: boolean;
   hasObstacles: boolean;
+  spawnPoints: ArenaSpawnPoint[];
+  lighting: {
+    ambientColor: number;
+    ambientIntensity: number;
+    dirColor: number;
+    dirIntensity: number;
+    dirPos: [number, number, number];
+    spotColor: number;
+    spotIntensity: number;
+  };
 }
 
 export interface ArenaObstacle {
@@ -100,6 +131,8 @@ export interface ObstacleCollider {
   rampHeight?: number;   // Ramp slope apex height
 }
 
+export type AIPersonality = 'AGGRESSIVE' | 'OPPORTUNIST' | 'BRAWLER' | 'FLANKER';
+
 export interface VehicleState {
   id: string;
   name: string;
@@ -107,6 +140,8 @@ export interface VehicleState {
   isAI: boolean;
   aiDifficulty?: AIDifficulty;
   aiState?: AIState;
+  personality?: AIPersonality;
+  decisionTimer?: number;
   vehicleId: VehicleId;
   color: string;
   accentColor: string;
@@ -115,9 +150,11 @@ export interface VehicleState {
   
   // World Space Coordinates & Motion
   x: number;          // World X
-  y: number;          // World Y height (airborne elevation)
+  y: number;          // World Y height (airborne elevation or ramp support)
   z: number;          // World Z
   rotationY: number;  // Facing angle in radians
+  pitch?: number;     // Visual/ramp pitch angle (radians)
+  roll?: number;      // Visual roll angle (radians)
   speed: number;      // Scalar speed
   vx: number;         // Velocity X
   vy: number;         // Velocity Y (jump vertical speed)
@@ -145,6 +182,7 @@ export interface VehicleState {
   lastHitTime: number;
   isDestroyed: boolean;
   rank: number;
+  connected?: boolean;  // false when remote player disconnects during a multiplayer match
   
   // AI Recovery Timer
   stuckTimer: number;
@@ -192,6 +230,7 @@ export interface DerbyLobbyPlayer {
   avatar?: string;
   isReady: boolean;
   role: 'HOST' | 'PLAYER';
+  selectedCarId?: VehicleId;
 }
 
 export interface DerbyRoomState {
@@ -199,15 +238,15 @@ export interface DerbyRoomState {
   hostId: string;
   gameType: string;
   players: DerbyLobbyPlayer[];
-  status: 'LOBBY' | 'COUNTDOWN' | 'PLAYING' | 'FINISHED';
-  seed: number;
+  status: 'WAITING' | 'LOBBY' | 'COUNTDOWN' | 'PLAYING' | 'FINISHED';
+  seed?: number;
   startTime?: number;
   countdownValue?: number;
-  settings: {
-    arenaId: ArenaId;
-    arenaIndex: number;
-    normalizedStats: boolean;
-    maxPlayers: number;
+  settings?: {
+    arenaId?: ArenaId;
+    arenaIndex?: number;
+    normalizedStats?: boolean;
+    maxPlayers?: number;
   };
 }
 

@@ -4,10 +4,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import {
   AIDifficulty,
+  AIPersonality,
   ArenaDefinition,
   ArenaId,
   CameraShake,
   DebrisPiece,
+  DerbyLobbyPlayer,
   HitNotification,
   MatchState,
   ObstacleCollider,
@@ -16,7 +18,15 @@ import {
 } from './types';
 import {
   ARENAS,
+  checkVehicleCollision,
+  CollisionResult,
   computeEffectiveStats,
+  DriverInput,
+  updateVehiclePhysics,
+  VEH_HEIGHT,
+  VEH_LENGTH,
+  VEH_WIDTH,
+  VehicleContactRecord,
   VEHICLES,
 } from './DerbyPhysicsEngine';
 import { derbyAIController } from './DerbyAIController';
@@ -24,8 +34,21 @@ import { derbySoundSystem } from './DerbySoundSystem';
 import { build3DArena, Derby3DArena } from './Derby3DArenaBuilder';
 import { create3DVehicle, preloadDerbyVehicleGLB, spawnImpactDebrisParts, update3DVehicleObject, Vehicle3DObject } from './Derby3DVehicleBuilder';
 import { DerbyParticleSystem } from './DerbyParticleSystem';
+import { socketService } from '@/lib/socket';
 
-interface DemolitionDerbyCanvasProps {
+const MULTIPLAYER_CAR_PALETTES = [
+  { color: '#dc2626', accent: '#2563eb', number: '23' }, // Player 1
+  { color: '#0284c7', accent: '#38bdf8', number: '07' }, // Player 2
+  { color: '#16a34a', accent: '#22c55e', number: '48' }, // Player 3
+  { color: '#ea580c', accent: '#f97316', number: '99' }, // Player 4
+  { color: '#9333ea', accent: '#a855f7', number: '33' }, // Player 5
+  { color: '#eab308', accent: '#fde047', number: '19' }, // Player 6
+  { color: '#db2777', accent: '#f472b6', number: '77' }, // Player 7
+  { color: '#475569', accent: '#94a3b8', number: '00' }, // Player 8
+];
+
+export interface DemolitionDerbyCanvasProps {
+  gameId?: string;
   arenaId: ArenaId;
   difficulty: AIDifficulty;
   playerVehicleId: VehicleId;
@@ -33,6 +56,11 @@ interface DemolitionDerbyCanvasProps {
   isMultiplayer: boolean;
   localUserId: string;
   localNickname: string;
+  roomPlayers?: DerbyLobbyPlayer[];
+  /** Server-authoritative alive count (numerator). In multiplayer only. */
+  serverAliveCount?: number;
+  /** Server-authoritative total player count (denominator). In multiplayer only. */
+  serverTotalPlayers?: number;
   onMatchComplete: (
     playerRank: number,
     playerScore: number,
@@ -41,11 +69,12 @@ interface DemolitionDerbyCanvasProps {
     survivalTime: number,
     isWin: boolean
   ) => void;
-  onHudUpdate?: (playerHp: number, score: number, combo: number, opponentsAlive: number, timerSeconds: number) => void;
+  onHudUpdate?: (playerHp: number, score: number, combo: number, opponentsAlive: number, timerSeconds: number, totalCombatants?: number) => void;
   onTransformSync?: (data: any) => void;
 }
 
 export function DemolitionDerbyCanvas({
+  gameId,
   arenaId,
   difficulty,
   playerVehicleId,
@@ -53,6 +82,9 @@ export function DemolitionDerbyCanvas({
   isMultiplayer,
   localUserId,
   localNickname,
+  roomPlayers,
+  serverAliveCount,
+  serverTotalPlayers,
   onMatchComplete,
   onHudUpdate,
   onTransformSync,
@@ -60,6 +92,28 @@ export function DemolitionDerbyCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
   const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  const gameIdRef = useRef(gameId);
+  gameIdRef.current = gameId;
+
+  // Lock arenaId at mount — never change mid-match regardless of prop changes
+  const lockedArenaIdRef = useRef(arenaId);
+  // (intentionally NOT updating this ref to prevent canvas remount)
+
+  const roomPlayersRef = useRef(roomPlayers);
+  roomPlayersRef.current = roomPlayers;
+
+  // Server-authoritative alive/total counts (multiplayer only) — always use refs so game loop reads latest value
+  const serverAliveCountRef = useRef(serverAliveCount);
+  serverAliveCountRef.current = serverAliveCount;
+  const serverTotalPlayersRef = useRef(serverTotalPlayers);
+  serverTotalPlayersRef.current = serverTotalPlayers;
+
+  // In multiplayer the alive count denominator is the actual # of human players in the match (server-sent).
+  // In solo mode we use the fixed 8-car grid.
+  const totalCombatants = isMultiplayer
+    ? Math.max(2, (serverTotalPlayers ?? roomPlayers?.length ?? 2))
+    : 8;
 
   // Match State Machine (COUNTDOWN -> PLAYING -> FINISHED)
   const [matchState, setMatchState] = useState<MatchState>('COUNTDOWN');
@@ -84,13 +138,26 @@ export function DemolitionDerbyCanvas({
   // Polished HUD Metrics State
   const [playerHp, setPlayerHp] = useState<number>(100);
   const [playerScore, setPlayerScore] = useState<number>(0);
-  const [opponentsAliveCount, setOpponentsAliveCount] = useState<number>(8);
+  const [opponentsAliveCount, setOpponentsAliveCount] = useState<number>(totalCombatants);
+  const [totalCombatantsCount, setTotalCombatantsCount] = useState<number>(totalCombatants);
   const [matchTimeSec, setMatchTimeSec] = useState<number>(0);
   const [speedKmhDisplay, setSpeedKmhDisplay] = useState<number>(0);
   const [activeNotifications, setActiveNotifications] = useState<HitNotification[]>([]);
+  const [floatingHealthBars, setFloatingHealthBars] = useState<{
+    id: string;
+    name: string;
+    isPlayer: boolean;
+    hp: number;
+    maxHp: number;
+    screenX: number;
+    screenY: number;
+  }[]>([]);
 
   // Development Debug Panel & Wireframe Visualizer (Hidden by default, F3 toggles)
   const [showDebugOverlay, setShowDebugOverlay] = useState<boolean>(false);
+  const [serverStateVersion, setServerStateVersion] = useState<number>(0);
+  const [serverMatchId, setServerMatchId] = useState<string>('');
+  const lastStateVersionRef = useRef<number>(-1);
   const [debugMetrics, setDebugMetrics] = useState<{
     inputW: boolean;
     inputA: boolean;
@@ -107,6 +174,7 @@ export function DemolitionDerbyCanvas({
     forwardSpeed: number;
     colliderCount: number;
     gameLoopActive: boolean;
+    aiTargets: string[];
   }>({
     inputW: false,
     inputA: false,
@@ -123,6 +191,7 @@ export function DemolitionDerbyCanvas({
     forwardSpeed: 0,
     colliderCount: 0,
     gameLoopActive: true,
+    aiTargets: [],
   });
 
   const onMatchCompleteRef = useRef(onMatchComplete);
@@ -130,6 +199,24 @@ export function DemolitionDerbyCanvas({
 
   const onHudUpdateRef = useRef(onHudUpdate);
   onHudUpdateRef.current = onHudUpdate;
+
+  const onTransformSyncRef = useRef(onTransformSync);
+  onTransformSyncRef.current = onTransformSync;
+
+  const playerUpgradesRef = useRef(playerUpgrades);
+  playerUpgradesRef.current = playerUpgrades;
+
+  const difficultyRef = useRef(difficulty);
+  difficultyRef.current = difficulty;
+
+  const isMultiplayerRef = useRef(isMultiplayer);
+  isMultiplayerRef.current = isMultiplayer;
+
+  const localUserIdRef = useRef(localUserId);
+  localUserIdRef.current = localUserId;
+
+  const localNicknameRef = useRef(localNickname);
+  localNicknameRef.current = localNickname;
 
   // ── 1. GLOBAL KEYBOARD INPUT LISTENERS ────────────────────
   useEffect(() => {
@@ -210,9 +297,14 @@ export function DemolitionDerbyCanvas({
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
+    // Use the locked arena ID captured at mount — never re-derive from props
+    const stableArenaId = lockedArenaIdRef.current;
+
     // 1. Scene, Camera, Renderer Setup
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(58, width / height, 0.4, 350);
+    // Use stable locked arena definition — never changes mid-match
+    const arenaDef = ARENAS[stableArenaId] || ARENAS.arena_1;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     renderer.setSize(width, height);
@@ -223,40 +315,63 @@ export function DemolitionDerbyCanvas({
     renderer.toneMappingExposure = 1.15;
     mountNode.appendChild(renderer.domElement);
 
-    // 2. PBR Lighting & Atmosphere Setup
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    // 2. Static Arena Stadium Construction & Colliders
+    const arena3D: Derby3DArena = build3DArena(arenaDef, scene);
+
+    // 3. PBR Lighting & Atmospheric Environment Setup
+    const ambientLight = new THREE.AmbientLight(
+      arenaDef.lighting.ambientColor,
+      arenaDef.lighting.ambientIntensity
+    );
     scene.add(ambientLight);
 
-    const dirLight = new THREE.DirectionalLight(0xfffbeb, 2.2);
-    dirLight.position.set(40, 65, 30);
+    const hemiLight = new THREE.HemisphereLight(0x93c5fd, 0x27170e, 0.85);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(
+      arenaDef.lighting.dirColor,
+      arenaDef.lighting.dirIntensity
+    );
+    dirLight.position.set(...arenaDef.lighting.dirPos);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.width = 1024;
     dirLight.shadow.mapSize.height = 1024;
     dirLight.shadow.camera.near = 10;
-    dirLight.shadow.camera.far = 160;
-    dirLight.shadow.camera.left = -55;
-    dirLight.shadow.camera.right = 55;
-    dirLight.shadow.camera.top = 55;
-    dirLight.shadow.camera.bottom = -55;
+    dirLight.shadow.camera.far = 180;
+    dirLight.shadow.camera.left = -60;
+    dirLight.shadow.camera.right = 60;
+    dirLight.shadow.camera.top = 60;
+    dirLight.shadow.camera.bottom = -60;
     scene.add(dirLight);
-
-    // 3. Static Arena Stadium Construction & Colliders
-    const arenaDef = ARENAS[arenaId] || ARENAS.arena_1;
-    const arena3D: Derby3DArena = build3DArena(arenaDef, scene);
 
     // 4. Particle Engine & Debris Parts
     const particleSystem = new DerbyParticleSystem(scene);
     const activeDebrisList: DebrisPiece[] = [];
 
-    // Collision Cooldown Timestamp Map (Prevents multi-frame damage spam!)
-    const lastImpactPairMap = new Map<string, number>();
+    // Collision Cooldown & Persistent Contact Manifold Tracker
+    const lastObstacleImpactMap = new Map<string, number>();
+    const vehicleContactTrackerMap = new Map<string, VehicleContactRecord>();
+
+    // Visual camera shake intensity and decay
+    let cameraShakeIntensity = 0;
 
     // 5. Player & AI Vehicle Mechanics
     const vehiclesStateMap = new Map<string, VehicleState>();
     const vehicle3DMeshesMap = new Map<string, Vehicle3DObject>();
-    const vehicleVelocitiesMap = new Map<string, THREE.Vector3>();
+    const vehicleInputsMap = new Map<string, DriverInput>();
 
-    const playerStats = computeEffectiveStats(playerVehicleId, playerUpgrades, isMultiplayer);
+    const localPlayerInRoom = roomPlayersRef.current?.find((p) => p.userId === localUserIdRef.current);
+    const effectiveLocalVehicleId: VehicleId = (localPlayerInRoom?.selectedCarId as VehicleId) || playerVehicleId || 'road_crusher';
+    const playerStats = computeEffectiveStats(effectiveLocalVehicleId, playerUpgrades, isMultiplayer);
+
+    const localPlayerIndex = isMultiplayer && roomPlayersRef.current
+      ? roomPlayersRef.current.findIndex((p) => p.userId === localUserIdRef.current)
+      : 0;
+    const localSpawnIndex = localPlayerIndex >= 0 ? localPlayerIndex : 0;
+    const playerSpawn = arenaDef.spawnPoints[localSpawnIndex] || { x: (localSpawnIndex - 3) * 8, z: 20, rotationY: 0 };
+    const localPalette = isMultiplayer
+      ? MULTIPLAYER_CAR_PALETTES[localSpawnIndex % MULTIPLAYER_CAR_PALETTES.length]
+      : { color: '#dc2626', accent: '#2563eb', number: '23' };
 
     // Local Player Vehicle Initialization
     const playerState: VehicleState = {
@@ -264,15 +379,17 @@ export function DemolitionDerbyCanvas({
       name: localNickname || 'ADITYA',
       isPlayer: true,
       isAI: false,
-      vehicleId: playerVehicleId,
-      color: '#dc2626',
-      accentColor: '#2563eb',
-      carNumber: '23',
-      carTitle: 'ADITYA',
-      x: 0,
+      vehicleId: effectiveLocalVehicleId,
+      color: localPalette.color,
+      accentColor: localPalette.accent,
+      carNumber: localPalette.number,
+      carTitle: localNickname || 'ADITYA',
+      x: playerSpawn.x,
       y: 0,
-      z: 14,
-      rotationY: 0,
+      z: playerSpawn.z,
+      rotationY: playerSpawn.rotationY,
+      pitch: 0,
+      roll: 0,
       speed: 0,
       vx: 0,
       vy: 0,
@@ -301,577 +418,457 @@ export function DemolitionDerbyCanvas({
     };
     vehiclesStateMap.set(localUserId, playerState);
 
-    const player3DObj = create3DVehicle(playerVehicleId, '#dc2626', '#2563eb', '23', 'ADITYA');
-    player3DObj.root.position.set(0, 0, 14);
-    player3DObj.root.rotation.y = 0;
+    const localDef = VEHICLES[effectiveLocalVehicleId] || VEHICLES.road_crusher;
+    const player3DObj = create3DVehicle(
+      effectiveLocalVehicleId,
+      localDef.color,
+      localDef.accentColor,
+      localPalette.number,
+      localNicknameRef.current || 'YOU'
+    );
+    player3DObj.root.position.set(playerSpawn.x, 0, playerSpawn.z);
+    player3DObj.root.rotation.y = playerSpawn.rotationY;
     scene.add(player3DObj.root);
     vehicle3DMeshesMap.set(localUserId, player3DObj);
-    vehicleVelocitiesMap.set(localUserId, new THREE.Vector3(0, 0, 0));
+    vehicleInputsMap.set(localUserId, { throttle: 0, steering: 0, handbrake: false });
 
-    // Spawn 7 AI Bot Opponents
-    if (!isMultiplayer) {
-      const botConfigs: { id: VehicleId; name: string; number: string; color: string; accent: string; title: string }[] = [
-        { id: 'muscle', name: 'BLAZE', number: '48', color: '#ea580c', accent: '#fbbf24', title: 'FIREBALL' },
-        { id: 'heavy', name: 'CRUSHER', number: '7', color: '#16a34a', accent: '#15803d', title: 'BRUTE' },
-        { id: 'starter', name: 'HAVOC', number: '19', color: '#eab308', accent: '#18181b', title: 'RAGE' },
-        { id: 'rally', name: 'VIPER', number: '99', color: '#9333ea', accent: '#06b6d4', title: 'VIPER' },
-        { id: 'rally', name: 'DRIFTER', number: '33', color: '#2563eb', accent: '#ffffff', title: 'DRIFT' },
-        { id: 'armored', name: 'IRONHIDE', number: '66', color: '#b91c1c', accent: '#78350f', title: 'IRON' },
-        { id: 'heavy', name: 'TITAN', number: '00', color: '#334155', accent: '#dc2626', title: 'TITAN' },
-      ];
+    // Spawn Remote Human Players from Authoritative Room Roster
+    const playersList = roomPlayersRef.current || [];
+    playersList.forEach((p, idx) => {
+      if (p.userId === localUserIdRef.current) return;
 
-      for (let i = 0; i < 7; i++) {
-        const botId = `bot_${i + 1}`;
-        const cfg = botConfigs[i];
-        const botStats = computeEffectiveStats(cfg.id);
+      const pSpawn = arenaDef.spawnPoints[idx] || { x: (idx - 3) * 8, z: -15, rotationY: -Math.PI };
+      const palette = MULTIPLAYER_CAR_PALETTES[idx % MULTIPLAYER_CAR_PALETTES.length];
+      const remoteCarId = (p.selectedCarId || (p as any).vehicleId || 'road_crusher') as VehicleId;
+      const remoteDef = VEHICLES[remoteCarId] || VEHICLES.road_crusher;
+      const remoteStats = computeEffectiveStats(remoteCarId);
 
-        const angle = ((i + 1) / 8) * Math.PI * 2;
-        const radius = 22;
-        const spawnX = Math.sin(angle) * radius;
-        const spawnZ = Math.cos(angle) * radius;
-        const spawnRot = angle + Math.PI;
+      const remotePlayerState: VehicleState = {
+        id: p.userId,
+        name: p.nickname || `Racer ${idx + 1}`,
+        isPlayer: false,
+        isAI: false,
+        aiDifficulty: difficultyRef.current,
+        aiState: 'IDLE',
+        personality: undefined,
+        decisionTimer: 1.0,
+        vehicleId: remoteCarId,
+        color: remoteDef.color,
+        accentColor: remoteDef.accentColor,
+        carNumber: palette.number,
+        carTitle: p.nickname || `Racer ${idx + 1}`,
+        x: pSpawn.x,
+        y: 0,
+        z: pSpawn.z,
+        rotationY: pSpawn.rotationY,
+        pitch: 0,
+        roll: 0,
+        speed: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        isDrifting: false,
+        isAirborne: false,
+        jumpCooldown: 0,
+        hp: 100,
+        maxHp: 100,
+        armor: remoteStats.armor,
+        ramStat: remoteStats.ram,
+        weight: remoteStats.weight,
+        topSpeed: remoteStats.speed,
+        accelPower: remoteStats.acceleration,
+        turnPower: remoteStats.handling,
+        damageDealt: 0,
+        hits: 0,
+        eliminations: 0,
+        score: 0,
+        combo: 0,
+        lastHitTime: 0,
+        isDestroyed: false,
+        rank: 0,
+        stuckTimer: 0,
+        reverseTimer: 0,
+      };
+      vehiclesStateMap.set(p.userId, remotePlayerState);
 
-        const botState: VehicleState = {
-          id: botId,
-          name: cfg.name,
-          isPlayer: false,
-          isAI: true,
-          aiDifficulty: difficulty,
-          aiState: 'IDLE',
-          vehicleId: cfg.id,
-          color: cfg.color,
-          accentColor: cfg.accent,
-          carNumber: cfg.number,
-          carTitle: cfg.title,
-          x: spawnX,
-          y: 0,
-          z: spawnZ,
-          rotationY: spawnRot,
-          speed: 0,
-          vx: 0,
-          vy: 0,
-          vz: 0,
-          isDrifting: false,
-          isAirborne: false,
-          jumpCooldown: 0,
-          hp: 100,
-          maxHp: 100,
-          armor: botStats.armor,
-          ramStat: botStats.ram,
-          weight: botStats.weight,
-          topSpeed: botStats.speed,
-          accelPower: botStats.acceleration,
-          turnPower: botStats.handling,
-          damageDealt: 0,
-          hits: 0,
-          eliminations: 0,
-          score: 0,
-          combo: 0,
-          lastHitTime: 0,
-          isDestroyed: false,
-          rank: 0,
-          stuckTimer: 0,
-          reverseTimer: 0,
-        };
-        vehiclesStateMap.set(botId, botState);
+      const remote3DObj = create3DVehicle(
+        remoteCarId,
+        remoteDef.color,
+        remoteDef.accentColor,
+        palette.number,
+        p.nickname
+      );
+      remote3DObj.root.position.set(pSpawn.x, 0, pSpawn.z);
+      remote3DObj.root.rotation.y = pSpawn.rotationY;
+      scene.add(remote3DObj.root);
+      vehicle3DMeshesMap.set(p.userId, remote3DObj);
+      vehicleInputsMap.set(p.userId, { throttle: 0, steering: 0, handbrake: false });
+    });
 
-        const bot3DObj = create3DVehicle(cfg.id, cfg.color, cfg.accent, cfg.number, cfg.title);
-        bot3DObj.root.position.set(spawnX, 0, spawnZ);
-        bot3DObj.root.rotation.y = spawnRot;
-        scene.add(bot3DObj.root);
-        vehicle3DMeshesMap.set(botId, bot3DObj);
-        vehicleVelocitiesMap.set(botId, new THREE.Vector3(0, 0, 0));
-      }
-    }
-
-    // 6. Match State Machine & Countdown Sequence
+    // 6. Match State Machine & Countdown Sequence (Server-Driven)
     let currentMatchState: MatchState = 'COUNTDOWN';
+    let matchStartTime = 0;
+
     setMatchState('COUNTDOWN');
     setCountdownNum('3');
-    derbySoundSystem.playCountdownBeep(false);
 
-    const timer1 = setTimeout(() => {
-      setCountdownNum('2');
-      derbySoundSystem.playCountdownBeep(false);
-    }, 1000);
-
-    const timer2 = setTimeout(() => {
-      setCountdownNum('1');
-      derbySoundSystem.playCountdownBeep(false);
-    }, 2000);
-
-    const timer3 = setTimeout(() => {
-      setCountdownNum('GO!');
-      currentMatchState = 'PLAYING';
-      setMatchState('PLAYING');
-      derbySoundSystem.playCountdownBeep(true);
-      derbySoundSystem.startEngineSound();
-    }, 3000);
-
-    const timer4 = setTimeout(() => {
-      setCountdownNum('');
-    }, 4000);
-
-    // 7. Authoritative Arcade Physics Constants
-    const MAX_FORWARD_SPEED = 22; // m/s (~79.2 KM/H)
-    const MAX_REVERSE_SPEED = 8; // m/s (~28.8 KM/H)
-    const FORWARD_ACCELERATION = 14; // m/s^2
-    const REVERSE_ACCELERATION = 8; // m/s^2
-    const BRAKE_DECELERATION = 22; // m/s^2
-    const DRAG = 3.5;
-    const STEERING_SPEED = 2.2; // Rad/s
-
-    // Helper method for general vehicle movement physics
-    // Helper method for general vehicle movement physics with sub-step CCD continuous collision detection
-    const updateVehiclePhysics = (
-      v3D: Vehicle3DObject,
-      vVel: THREE.Vector3,
-      vState: VehicleState,
-      throttleInput: number,
-      steeringInput: number,
-      handbrakeInput: boolean,
-      dt: number
-    ) => {
-      if (vState.isDestroyed || vState.hp <= 0) {
-        vVel.multiplyScalar(Math.max(0, 1 - DRAG * dt));
-        v3D.root.position.addScaledVector(vVel, dt);
-        return;
-      }
-
-      // Local Forward Vector (0, 0, -1)
-      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(v3D.root.quaternion).normalize();
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(v3D.root.quaternion).normalize();
-
-      const forwardSpeed = vVel.dot(forward);
-
-      // Acceleration & Braking
-      if (throttleInput > 0) {
-        if (forwardSpeed < 0) {
-          // Braking while reversing
-          vVel.multiplyScalar(Math.max(0, 1 - BRAKE_DECELERATION * dt));
-        } else {
-          vVel.addScaledVector(forward, FORWARD_ACCELERATION * dt);
-        }
-      } else if (throttleInput < 0) {
-        if (forwardSpeed > 0) {
-          // S behaves as brake first when moving forward
-          vVel.multiplyScalar(Math.max(0, 1 - BRAKE_DECELERATION * dt));
-        } else {
-          vVel.addScaledVector(forward, -REVERSE_ACCELERATION * dt);
-        }
-      } else {
-        // Friction / Coasting when throttle is 0
-        vVel.multiplyScalar(Math.max(0, 1 - DRAG * dt));
-      }
-
-      // Speed Limit Cap
-      const currentForwardSpeed = vVel.dot(forward);
-      if (currentForwardSpeed > MAX_FORWARD_SPEED) {
-        const excess = currentForwardSpeed - MAX_FORWARD_SPEED;
-        vVel.addScaledVector(forward, -excess);
-      } else if (currentForwardSpeed < -MAX_REVERSE_SPEED) {
-        const excess = currentForwardSpeed - (-MAX_REVERSE_SPEED);
-        vVel.addScaledVector(forward, -excess);
-      }
-
-      // Steering (rotates vehicle itself)
-      if (Math.abs(currentForwardSpeed) > 0.4) {
-        const speedFactor = Math.min(Math.abs(currentForwardSpeed) / MAX_FORWARD_SPEED, 1.0);
-        let steerDir = steeringInput;
-        if (handbrakeInput) steerDir *= 1.35; // Responsive handbrake turn
-
-        const steeringAmount = STEERING_SPEED * speedFactor * dt;
-        v3D.root.rotation.y += steerDir * steeringAmount * Math.sign(currentForwardSpeed);
-      }
-
-      // Realistic Lateral Grip & Drift
-      const forwardVelocity = forward.clone().multiplyScalar(vVel.dot(forward));
-      const sidewaysVelocity = right.clone().multiplyScalar(vVel.dot(right));
-
-      if (handbrakeInput) {
-        // Handbrake drift reduces lateral grip significantly
-        sidewaysVelocity.multiplyScalar(0.96);
-        forwardVelocity.multiplyScalar(0.985);
-        vState.isDrifting = true;
-      } else {
-        // Normal driving lateral tire grip
-        sidewaysVelocity.multiplyScalar(0.82);
-        vState.isDrifting = false;
-      }
-
-      vVel.copy(forwardVelocity).add(sidewaysVelocity);
-
-      if (vVel.length() < 0.05) {
-        vVel.set(0, 0, 0);
-      }
-
-      // ── SUB-STEPPING CONTINUOUS COLLISION MOVEMENT (ANTI-TUNNELING) ──
-      const stepDist = vVel.length() * dt;
-      const numSubsteps = Math.max(1, Math.min(8, Math.ceil(stepDist / 0.20)));
-      const subDt = dt / numSubsteps;
-      const vehRadius = 1.35;
-      const nowTime = Date.now();
-      const maxPlayableRadius = arenaDef.radius - 0.8;
-
-      for (let s = 0; s < numSubsteps; s++) {
-        v3D.root.position.addScaledVector(vVel, subDt);
-
-        // Static Arena Obstacle Collisions
-        if (arena3D && arena3D.colliders) {
-          arena3D.colliders.forEach((col) => {
-            if (col.type === 'cylinder') {
-              const cylRadius = col.radius || 1.2;
-              const dx = v3D.root.position.x - col.x;
-              const dz = v3D.root.position.z - col.z;
-              const dist = Math.sqrt(dx * dx + dz * dz);
-              const minDist = cylRadius + vehRadius;
-
-              if (dist < minDist && dist > 0.001) {
-                const nx = dx / dist;
-                const nz = dz / dist;
-                const overlap = minDist - dist;
-
-                v3D.root.position.x += nx * overlap;
-                v3D.root.position.z += nz * overlap;
-
-                const dot = vVel.x * nx + vVel.z * nz;
-                if (dot < 0) {
-                  vVel.x -= 1.35 * dot * nx;
-                  vVel.z -= 1.35 * dot * nz;
-                }
-
-                const impactKey = `${vState.id}_${col.id}`;
-                const lastImpact = lastImpactPairMap.get(impactKey) || 0;
-                const impactSpeed = Math.abs(dot);
-
-                if (nowTime - lastImpact > 200 && impactSpeed > 3.2) {
-                  lastImpactPairMap.set(impactKey, nowTime);
-                  const dmg = Math.round(impactSpeed * 2.8);
-                  vState.hp = Math.max(0, vState.hp - dmg);
-
-                  if (vState.isPlayer) {
-                    derbySoundSystem.playImpact(impactSpeed > 12 ? 'CRITICAL' : 'HEAVY');
-                    particleSystem.emitSparks(v3D.root.position.x, 1.0, v3D.root.position.z, 16);
-                  }
-                }
-              }
-            } else if (col.type === 'box' || col.type === 'wall') {
-              const rot = col.rotation || 0;
-              const dx = v3D.root.position.x - col.x;
-              const dz = v3D.root.position.z - col.z;
-
-              const localX = dx * Math.cos(-rot) - dz * Math.sin(-rot);
-              const localZ = dx * Math.sin(-rot) + dz * Math.cos(-rot);
-
-              const hw = col.halfWidth || 2.0;
-              const hl = col.halfLength || 0.5;
-
-              const closestX = Math.max(-hw, Math.min(hw, localX));
-              const closestZ = Math.max(-hl, Math.min(hl, localZ));
-
-              const distLocalX = localX - closestX;
-              const distLocalZ = localZ - closestZ;
-              const localDist = Math.sqrt(distLocalX * distLocalX + distLocalZ * distLocalZ);
-
-              if (localDist < vehRadius) {
-                let pushLx = 0;
-                let pushLz = 0;
-
-                if (localDist > 0.001) {
-                  const overlap = vehRadius - localDist;
-                  pushLx = (distLocalX / localDist) * overlap;
-                  pushLz = (distLocalZ / localDist) * overlap;
-                } else {
-                  const overlapX = hw + vehRadius - Math.abs(localX);
-                  const overlapZ = hl + vehRadius - Math.abs(localZ);
-                  if (overlapX < overlapZ) {
-                    pushLx = Math.sign(localX) * overlapX;
-                  } else {
-                    pushLz = Math.sign(localZ) * overlapZ;
-                  }
-                }
-
-                const pushWx = pushLx * Math.cos(rot) - pushLz * Math.sin(rot);
-                const pushWz = pushLx * Math.sin(rot) + pushLz * Math.cos(rot);
-
-                v3D.root.position.x += pushWx;
-                v3D.root.position.z += pushWz;
-
-                const normLen = Math.sqrt(pushWx * pushWx + pushWz * pushWz);
-                if (normLen > 0.001) {
-                  const nx = pushWx / normLen;
-                  const nz = pushWz / normLen;
-                  const dot = vVel.x * nx + vVel.z * nz;
-                  if (dot < 0) {
-                    vVel.x -= 1.35 * dot * nx;
-                    vVel.z -= 1.35 * dot * nz;
-                  }
-
-                  const impactKey = `${vState.id}_${col.id}`;
-                  const lastImpact = lastImpactPairMap.get(impactKey) || 0;
-                  const impactSpeed = Math.abs(dot);
-
-                  if (nowTime - lastImpact > 200 && impactSpeed > 3.2) {
-                    lastImpactPairMap.set(impactKey, nowTime);
-                    const dmg = Math.round(impactSpeed * 2.8);
-                    vState.hp = Math.max(0, vState.hp - dmg);
-
-                    if (vState.isPlayer) {
-                      derbySoundSystem.playImpact('HEAVY');
-                      particleSystem.emitSparks(v3D.root.position.x, 1.0, v3D.root.position.z, 14);
-                    }
-                  }
-                }
-              }
-            } else if (col.type === 'ramp') {
-              const rot = col.rotation || 0;
-              const dx = v3D.root.position.x - col.x;
-              const dz = v3D.root.position.z - col.z;
-
-              const localX = dx * Math.cos(-rot) - dz * Math.sin(-rot);
-              const localZ = dx * Math.sin(-rot) + dz * Math.cos(-rot);
-
-              const hw = col.halfWidth || 4.0;
-              const hl = col.halfLength || 3.5;
-
-              if (Math.abs(localX) <= hw && Math.abs(localZ) <= hl) {
-                const rampHeightApex = col.rampHeight || 2.2;
-                const slopeRatio = 0.5 - localZ / (hl * 2);
-                const targetY = Math.max(0, rampHeightApex * slopeRatio);
-
-                v3D.root.position.y = Math.max(v3D.root.position.y, targetY);
-
-                if (localZ <= -hl + 0.5 && vState.speed > 5.0) {
-                  vVel.y = vState.speed * 0.35;
-                  vState.isAirborne = true;
-                }
-              }
-            }
-          });
-        }
-
-        // Hard Outer Circular Perimeter Fallback Safeguard
-        const distFromCenter = Math.sqrt(v3D.root.position.x * v3D.root.position.x + v3D.root.position.z * v3D.root.position.z);
-        if (distFromCenter > maxPlayableRadius && distFromCenter > 0.001) {
-          const nx = v3D.root.position.x / distFromCenter;
-          const nz = v3D.root.position.z / distFromCenter;
-
-          v3D.root.position.x = nx * maxPlayableRadius;
-          v3D.root.position.z = nz * maxPlayableRadius;
-
-          const dot = vVel.x * nx + vVel.z * nz;
-          if (dot > 0) {
-            vVel.x -= 1.35 * dot * nx;
-            vVel.z -= 1.35 * dot * nz;
-          }
-        }
-      }
-
-      // Sync transform back to state object
-      vState.x = v3D.root.position.x;
-      vState.y = v3D.root.position.y;
-      vState.z = v3D.root.position.z;
-      vState.rotationY = v3D.root.rotation.y;
-      vState.vx = vVel.x;
-      vState.vy = vVel.y;
-      vState.vz = vVel.z;
-      vState.speed = vVel.length();
-
-      // Update 3D car mesh wheels, suspension pitch/roll, and visual damage
-      update3DVehicleObject(v3D, vState, steeringInput, dt);
-    };
-
-    // 8. Main Authoritative Loop
+    // 7. Main Authoritative Fixed-Step Physics Loop
     let animFrameId: number;
     const clock = new THREE.Clock();
-    let matchStartTime = Date.now();
     let lastHudUpdateTime = 0;
+    let lastNetworkSyncTime = 0;
+    let physicsAccumulator = 0;
+    const FIXED_DT = 1 / 60; // 60Hz deterministic physics tick
+
+    const vehDebugWireframeMap = new Map<string, THREE.LineSegments>();
+    const vehBoxGeo = new THREE.WireframeGeometry(new THREE.BoxGeometry(VEH_WIDTH, VEH_HEIGHT, VEH_LENGTH));
+    const vehWireMatPlayer = new THREE.LineBasicMaterial({ color: 0x38bdf8 });
+    const vehWireMatAI = new THREE.LineBasicMaterial({ color: 0xef4444 });
 
     const gameLoop = () => {
       animFrameId = requestAnimationFrame(gameLoop);
 
-      const dt = Math.min(clock.getDelta(), 0.05);
+      const frameDt = Math.min(clock.getDelta(), 0.05);
+      const nowTime = Date.now();
+      const elapsedSec = currentMatchState === 'PLAYING' && matchStartTime > 0
+        ? Math.floor((nowTime - matchStartTime) / 1000)
+        : 0;
 
-      const player3D = vehicle3DMeshesMap.get(localUserId);
-      const playerVel = vehicleVelocitiesMap.get(localUserId);
-      const playerState = vehiclesStateMap.get(localUserId);
+      const player3D = vehicle3DMeshesMap.get(localUserIdRef.current);
+      const playerState = vehiclesStateMap.get(localUserIdRef.current);
 
       // Synchronize Wireframe Debug Visualizer Visibility with F3 State
-      arena3D.debugGizmoGroup.visible = showDebugOverlay;
+      if (arena3D && arena3D.debugGizmoGroup) {
+        arena3D.debugGizmoGroup.visible = showDebugOverlay;
+        if (showDebugOverlay) {
+          vehiclesStateMap.forEach((vState, vId) => {
+            let wire = vehDebugWireframeMap.get(vId);
+            if (!wire) {
+              wire = new THREE.LineSegments(vehBoxGeo, vState.isPlayer ? vehWireMatPlayer : vehWireMatAI);
+              arena3D.debugGizmoGroup.add(wire);
+              vehDebugWireframeMap.set(vId, wire);
+            }
+            wire.position.set(vState.x, (vState.y || 0) + VEH_HEIGHT / 2, vState.z);
+            wire.rotation.y = vState.rotationY;
+            wire.visible = !vState.isDestroyed;
+          });
+        }
+      }
 
-      if (currentMatchState === 'PLAYING' && player3D && playerVel && playerState) {
+      if (currentMatchState === 'PLAYING' && player3D && playerState) {
         // --- 1. PROCESS PLAYER INPUT ---
         let pThrottle = 0;
         let pSteering = 0;
         let pHandbrake = false;
 
         const k = inputKeys.current;
-        if (k.forward) pThrottle += 1;
-        if (k.backward) pThrottle -= 1;
-        if (k.left) pSteering += 1;
-        if (k.right) pSteering -= 1;
+        if (k.forward && k.backward) {
+          pThrottle = -1; // Brake takes precedence
+        } else if (k.forward) {
+          pThrottle = 1;
+        } else if (k.backward) {
+          pThrottle = -1;
+        }
+
+        if (k.left && k.right) {
+          pSteering = 0;
+        } else if (k.left) {
+          pSteering = -1; // Steer Left
+        } else if (k.right) {
+          pSteering = 1;  // Steer Right
+        }
+
         if (k.handbrake) pHandbrake = true;
 
         if (mobileControlsRef.current.throttle !== 0) pThrottle = mobileControlsRef.current.throttle;
         if (mobileControlsRef.current.steering !== 0) pSteering = mobileControlsRef.current.steering;
         if (mobileControlsRef.current.handbrake) pHandbrake = true;
 
-        // Execute Player Vehicle Physics Update
-        updateVehiclePhysics(player3D, playerVel, playerState, pThrottle, pSteering, pHandbrake, dt);
+        vehicleInputsMap.set(localUserId, { throttle: pThrottle, steering: pSteering, handbrake: pHandbrake });
 
-        // --- 2. PROCESS AI BOT VEHICLE PHYSICS ---
-        vehiclesStateMap.forEach((botState, botId) => {
-          if (botState.isAI) {
-            const bot3D = vehicle3DMeshesMap.get(botId);
-            const botVel = vehicleVelocitiesMap.get(botId);
-            if (bot3D && botVel) {
-              const opponents = Array.from(vehiclesStateMap.values());
-              const aiInput = derbyAIController.updateAI(botState, opponents, difficulty, dt);
-              updateVehiclePhysics(bot3D, botVel, botState, aiInput.throttle, aiInput.steering, aiInput.handbrake, dt);
+        // --- 2. FIXED-TIMESTEP SIMULATION ACCUMULATOR ---
+        physicsAccumulator += frameDt;
+        const allVehicleStates = Array.from(vehiclesStateMap.values());
+
+        while (physicsAccumulator >= FIXED_DT) {
+          // A. Process AI Bot Inputs
+          vehiclesStateMap.forEach((botState, botId) => {
+            if (botState.isAI) {
+              const aiInput = derbyAIController.updateAI(botState, allVehicleStates, difficulty, FIXED_DT);
+              vehicleInputsMap.set(botId, aiInput);
             }
-          }
-        });
+          });
 
-        const allVehiclesList = Array.from(vehiclesStateMap.values());
-        const nowTime = Date.now();
+          // B. Integrate Authoritative Vehicle Physics (Substeps + CCD + Obstacles)
+          vehiclesStateMap.forEach((vState, vId) => {
+            const input = vehicleInputsMap.get(vId) || { throttle: 0, steering: 0, handbrake: false };
+            const res = updateVehiclePhysics(
+              vState,
+              input,
+              arenaDef,
+              arena3D.colliders,
+              FIXED_DT,
+              nowTime,
+              lastObstacleImpactMap,
+              (speed, colId) => {
+                if (vState.hp <= 0 || vState.isDestroyed) return;
 
-        // --- 4. INTER-VEHICLE COLLISION PHYSICS & DETACHABLE DEBRIS ---
-        for (let i = 0; i < allVehiclesList.length; i++) {
-          for (let j = i + 1; j < allVehiclesList.length; j++) {
-            const vA = allVehiclesList[i];
-            const vB = allVehiclesList[j];
-            if (vA.isDestroyed || vB.isDestroyed) continue;
+                const armorMitigation = 100 / (100 + (vState.armor || 60) * 0.7);
+                let baseDmg = 4;
+                if (speed >= 14.0) baseDmg = Math.round(14 + (speed - 14) * 1.2);
+                else if (speed >= 8.0) baseDmg = Math.round(8 + (speed - 8) * 1.0);
+                else baseDmg = Math.round(3 + (speed - 2.0) * 0.8);
+                const envDamage = Math.max(2, Math.min(45, Math.round(baseDmg * armorMitigation * 1.3)));
 
-            const meshA = vehicle3DMeshesMap.get(vA.id);
-            const meshB = vehicle3DMeshesMap.get(vB.id);
-            const velA = vehicleVelocitiesMap.get(vA.id);
-            const velB = vehicleVelocitiesMap.get(vB.id);
-            if (!meshA || !meshB || !velA || !velB) continue;
+                particleSystem.emitSparks(vState.x, (vState.y || 0) + 0.6, vState.z, 14);
 
-            const dx = meshB.root.position.x - meshA.root.position.x;
-            const dz = meshB.root.position.z - meshA.root.position.z;
-            const dist = Math.sqrt(dx * dx + dz * dz);
-            const minDist = 3.6; // Bounding vehicle diameter
+                if (vState.isPlayer) {
+                  derbySoundSystem.playImpact(speed > 10 ? 'CRITICAL' : 'HEAVY');
+                  cameraShakeIntensity = Math.min(0.45, Math.max(cameraShakeIntensity, (speed - 3.0) * 0.035));
 
-            if (dist < minDist && dist > 0.001) {
-              const nx = dx / dist;
-              const nz = dz / dist;
+                  const socket = socketService.getSocket();
+                  if (socket && gameIdRef.current) {
+                    const collisionId = `env_${gameIdRef.current}_${localUserIdRef.current}_${Date.now()}`;
+                    socket.emit('derby_env_impact', {
+                      gameId: gameIdRef.current,
+                      userId: localUserIdRef.current,
+                      playerId: localUserIdRef.current,
+                      impactSpeed: speed,
+                      collisionId,
+                      hitX: vState.x,
+                      hitY: (vState.y || 0) + 0.6,
+                      hitZ: vState.z,
+                    });
+                  }
 
-              // Separate overlapping vehicle meshes
-              const overlap = minDist - dist;
-              meshA.root.position.x -= nx * overlap * 0.5;
-              meshA.root.position.z -= nz * overlap * 0.5;
-              meshB.root.position.x += nx * overlap * 0.5;
-              meshB.root.position.z += nz * overlap * 0.5;
+                  if (!isMultiplayer || !gameIdRef.current) {
+                    // Local HP deduction strictly in solo / offline mode
+                    vState.hp = Math.max(0, vState.hp - envDamage);
+                    setPlayerHp(Math.round(vState.hp));
 
-              // Calculate local impact direction for directional mesh deformation
-              const impactWorldDir = new THREE.Vector3(nx, 0, nz);
-              meshA.lastImpactLocalDir = impactWorldDir.clone().applyQuaternion(meshA.root.quaternion.clone().invert());
-              meshB.lastImpactLocalDir = impactWorldDir.clone().negate().applyQuaternion(meshB.root.quaternion.clone().invert());
-
-              // Calculate relative impact velocity
-              const relVx = velA.x - velB.x;
-              const relVz = velA.z - velB.z;
-              const relativeSpeed = Math.sqrt(relVx * relVx + relVz * relVz);
-
-              const pairKey = `veh_${vA.id}_${vB.id}`;
-              const lastImpact = lastImpactPairMap.get(pairKey) || 0;
-
-              if (relativeSpeed > 3.0 && nowTime - lastImpact > 200) {
-                lastImpactPairMap.set(pairKey, nowTime);
-
-                // Apply knockback impulse
-                const impulse = relativeSpeed * 0.45;
-                velA.x -= nx * impulse;
-                velA.z -= nz * impulse;
-                velB.x += nx * impulse;
-                velB.z += nz * impulse;
-
-                // Calculate damage from impact speed
-                const dmg = Math.round(relativeSpeed * 3.5);
-                vA.hp = Math.max(0, vA.hp - dmg);
-                vB.hp = Math.max(0, vB.hp - dmg);
-
-                const severity = relativeSpeed > 15 ? 'CRITICAL' : relativeSpeed > 8 ? 'HEAVY' : 'NORMAL';
-                derbySoundSystem.playImpact(severity);
-
-                // Emit sparks at exact collision midpoint
-                const midX = (meshA.root.position.x + meshB.root.position.x) * 0.5;
-                const midZ = (meshA.root.position.z + meshB.root.position.z) * 0.5;
-                const sparkCount = Math.min(36, Math.max(8, Math.floor(relativeSpeed * 2.0)));
-                particleSystem.emitSparks(midX, 1.0, midZ, sparkCount);
-
-                // Trigger subtle camera shake on heavy impact for player
-                if (vA.isPlayer || vB.isPlayer) {
-                  const shakeAmount = Math.min(0.5, Math.max(0, (relativeSpeed - 8.0) * 0.04));
-                  if (shakeAmount > 0) {
-                    camera.position.x += (Math.random() - 0.5) * shakeAmount;
-                    camera.position.y += (Math.random() - 0.5) * shakeAmount;
+                    if (vState.hp <= 0 && !vState.isDestroyed) {
+                      vState.isDestroyed = true;
+                      particleSystem.emitSparks(vState.x, 1.0, vState.z, 25);
+                      particleSystem.emitSmokeAndFire(vState.x, 1.0, vState.z, true);
+                      derbySoundSystem.playExplosion();
+                      pushNotification('VEHICLE TOTALED!', 0, 'ELIMINATION');
+                    }
+                  }
+                } else if (!isMultiplayer || !gameIdRef.current) {
+                  // Non-player cars in solo mode
+                  vState.hp = Math.max(0, vState.hp - envDamage);
+                  if (vState.hp <= 0 && !vState.isDestroyed) {
+                    vState.isDestroyed = true;
+                    particleSystem.emitSparks(vState.x, 1.0, vState.z, 25);
+                    particleSystem.emitSmokeAndFire(vState.x, 1.0, vState.z, true);
+                    derbySoundSystem.playExplosion();
                   }
                 }
+              }
+            );
 
-                if (relativeSpeed > 10) {
-                  const debris = spawnImpactDebrisParts(midX, 1.0, midZ, relativeSpeed, vA.color);
-                  activeDebrisList.push(...debris);
-                }
+            if (res.justJumped && vState.isPlayer) {
+              derbySoundSystem.playImpact('HEAVY');
+              pushNotification('RAMP JUMP! +50', 50, 'RAMP_JUMP');
+              vState.score += 50;
+            }
+          });
 
-                // Score & Elimination Check
-                const attacker = velA.length() >= velB.length() ? vA : vB;
-                const defender = attacker === vA ? vB : vA;
+          // C. Multi-Iteration Vehicle-vs-Vehicle OBB SAT Relaxation Solver (4 iterations)
+          for (let iter = 0; iter < 4; iter++) {
+            for (let i = 0; i < allVehicleStates.length; i++) {
+              for (let j = i + 1; j < allVehicleStates.length; j++) {
+                const vA = allVehicleStates[i];
+                const vB = allVehicleStates[j];
 
-                if (attacker.isPlayer) {
-                  const pts = Math.round(relativeSpeed * 18);
-                  attacker.score += pts;
-                  attacker.damageDealt += dmg;
-                  pushNotification(severity === 'CRITICAL' ? `CRITICAL HIT! +${pts}` : severity === 'HEAVY' ? `HEAVY HIT! +${pts}` : `IMPACT +${pts}`, pts, severity);
-                }
+                const colRes: CollisionResult | null = checkVehicleCollision(vA, vB, nowTime, vehicleContactTrackerMap);
+                if (colRes && colRes.hasCollision) {
+                  const meshA = vehicle3DMeshesMap.get(vA.id);
+                  const meshB = vehicle3DMeshesMap.get(vB.id);
 
-                if (defender.hp <= 0 && !defender.isDestroyed) {
-                  defender.isDestroyed = true;
-                  derbySoundSystem.playExplosion();
-                  if (attacker.isPlayer) {
-                    attacker.eliminations += 1;
-                    attacker.score += 250;
-                    pushNotification(`TAKEDOWN! +250`, 250, 'ELIMINATION');
+                  if (meshA && colRes.normal) {
+                    const impactWorldDir = new THREE.Vector3(colRes.normal.x, 0, colRes.normal.z);
+                    meshA.lastImpactLocalDir = impactWorldDir.clone().applyQuaternion(meshA.root.quaternion.clone().invert());
+                  }
+                  if (meshB && colRes.normal) {
+                    const impactWorldDir = new THREE.Vector3(colRes.normal.x, 0, colRes.normal.z);
+                    meshB.lastImpactLocalDir = impactWorldDir.clone().negate().applyQuaternion(meshB.root.quaternion.clone().invert());
+                  }
+
+                  // Only trigger impact event effects once per physical impact
+                  if (colRes.isNewImpactEvent && colRes.relativeVelocity >= 1.5 && (colRes.damageA > 0 || colRes.damageB > 0)) {
+                    derbySoundSystem.playImpact(colRes.impactSeverity);
+                    particleSystem.emitSparks(
+                      colRes.impactX,
+                      colRes.impactY,
+                      colRes.impactZ,
+                      Math.min(36, Math.max(8, Math.floor(colRes.relativeVelocity * 2.0)))
+                    );
+
+                    if (vA.isPlayer || vB.isPlayer) {
+                      cameraShakeIntensity = Math.min(0.45, Math.max(cameraShakeIntensity, (colRes.relativeVelocity - 3.0) * 0.035));
+                    }
+
+                    if (colRes.relativeVelocity > 8.0) {
+                      const debris = spawnImpactDebrisParts(colRes.impactX, colRes.impactY, colRes.impactZ, colRes.relativeVelocity, vA.color);
+                      activeDebrisList.push(...debris);
+                    }
+
+                    // Determine attacker/defender
+                    const aForwardSpeed = vA.vx * colRes.normal.x + vA.vz * colRes.normal.z;
+                    const bForwardSpeed = -(vB.vx * colRes.normal.x + vB.vz * colRes.normal.z);
+                    const attacker = aForwardSpeed >= bForwardSpeed ? vA : vB;
+                    const defender = attacker === vA ? vB : vA;
+
+                    // If local player is involved in the collision, emit hit impact to server
+                    const localId = localUserIdRef.current;
+                    const localInvolved = vA.id === localId || vB.id === localId;
+
+                    if (localInvolved) {
+                      const socket = socketService.getSocket();
+                      if (socket && gameIdRef.current) {
+                        const collisionId = `${gameIdRef.current}_${attacker.id}_${defender.id}_${Date.now()}`;
+                        socket.emit('derby_hit_impact', {
+                          gameId: gameIdRef.current,
+                          userId: localId,
+                          attackerId: attacker.id,
+                          targetId: defender.id,
+                          impactSpeed: colRes.relativeVelocity,
+                          collisionId,
+                          attackerRam: attacker.ramStat,
+                          targetArmor: defender.armor,
+                          hitX: colRes.impactX,
+                          hitY: colRes.impactY,
+                          hitZ: colRes.impactZ,
+                        });
+                      }
+                    }
+
+                    // Local damage application for offline/singleplayer or immediate responsive feedback
+                    if (!isMultiplayer || !gameIdRef.current) {
+                      if (colRes.damageB > 0 && vB.hp > 0 && !vB.isDestroyed) {
+                        vB.hp = Math.max(0, vB.hp - colRes.damageB);
+                        vA.damageDealt += colRes.damageB;
+                        vA.hits += 1;
+                        vA.score += colRes.damageB * 2;
+
+                        if (vA.isPlayer) {
+                          setPlayerScore(vA.score);
+                          pushNotification(colRes.damageB >= 20 ? `CRITICAL SMASH! +${colRes.damageB * 2}` : `HIT! +${colRes.damageB * 2}`, colRes.damageB * 2, colRes.damageB >= 20 ? 'CRITICAL' : 'NORMAL');
+                        }
+                        if (vB.isPlayer) {
+                          setPlayerHp(Math.round(vB.hp));
+                        }
+
+                        if (vB.hp <= 0 && !vB.isDestroyed) {
+                          vB.isDestroyed = true;
+                          vA.eliminations += 1;
+                          vA.score += 300;
+                          if (vA.isPlayer) {
+                            setPlayerScore(vA.score);
+                            pushNotification('WRECKED OPPONENT! +300', 300, 'ELIMINATION');
+                          }
+                          particleSystem.emitSparks(vB.x, 1.0, vB.z, 25);
+                          particleSystem.emitSmokeAndFire(vB.x, 1.0, vB.z, true);
+                          derbySoundSystem.playExplosion();
+                        }
+                      }
+
+                      if (colRes.damageA > 0 && vA.hp > 0 && !vA.isDestroyed) {
+                        vA.hp = Math.max(0, vA.hp - colRes.damageA);
+                        vB.damageDealt += colRes.damageA;
+                        vB.hits += 1;
+                        vB.score += colRes.damageA * 2;
+
+                        if (vB.isPlayer) {
+                          setPlayerScore(vB.score);
+                        }
+                        if (vA.isPlayer) {
+                          setPlayerHp(Math.round(vA.hp));
+                        }
+
+                        if (vA.hp <= 0 && !vA.isDestroyed) {
+                          vA.isDestroyed = true;
+                          vB.eliminations += 1;
+                          vB.score += 300;
+                          particleSystem.emitSparks(vA.x, 1.0, vA.z, 25);
+                          particleSystem.emitSmokeAndFire(vA.x, 1.0, vA.z, true);
+                          derbySoundSystem.playExplosion();
+                        }
+                      }
+                    }
                   }
                 }
               }
             }
           }
+
+          physicsAccumulator -= FIXED_DT;
         }
 
-        // --- 5. PARTICLES & DUST UPDATES ---
-        particleSystem.update(dt);
-        particleSystem.updateDebris(activeDebrisList, dt);
-
-        allVehiclesList.forEach((vState) => {
-          if (vState.speed > 3.0 && !vState.isAirborne) {
-            particleSystem.emitDust(vState.x, vState.y, vState.z, vState.isDrifting ? 2.2 : 0.7);
+        // --- 3. SYNCHRONIZE 3D VISUAL PRESENTATION ---
+        vehiclesStateMap.forEach((vState, vId) => {
+          const vMesh = vehicle3DMeshesMap.get(vId);
+          const vInput = vehicleInputsMap.get(vId) || { throttle: 0, steering: 0, handbrake: false };
+          if (vMesh) {
+            update3DVehicleObject(vMesh, vState, vInput.steering, frameDt);
           }
         });
 
-        // --- 6. THIRD-PERSON CHASE CAMERA SYSTEM ---
+        // --- 4. PARTICLES & DUST UPDATES ---
+        particleSystem.update(frameDt);
+        particleSystem.updateDebris(activeDebrisList, frameDt);
+
+        allVehicleStates.forEach((vState) => {
+          if (vState.speed > 3.0 && !vState.isAirborne) {
+            particleSystem.emitDust(vState.x, vState.y || 0, vState.z, vState.isDrifting ? 2.2 : 0.7);
+          }
+        });
+
+        // --- 5. THIRD-PERSON CHASE CAMERA SYSTEM (Forward = -Z, Camera behind at +Z) ---
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player3D.root.quaternion).normalize();
-        const cameraOffset = new THREE.Vector3(0, 5, 9).applyQuaternion(player3D.root.quaternion);
+        const cameraOffset = new THREE.Vector3(0, 4.8, 8.8).applyQuaternion(player3D.root.quaternion);
         const desiredCameraPosition = player3D.root.position.clone().add(cameraOffset);
 
-        // Smoothly chase desired position
-        camera.position.lerp(desiredCameraPosition, 1 - Math.pow(0.001, dt));
+        camera.position.lerp(desiredCameraPosition, 1 - Math.pow(0.001, frameDt));
 
-        // Look 5 meters ahead of player car
-        const cameraLookTarget = player3D.root.position.clone().add(forward.clone().multiplyScalar(5));
+        if (cameraShakeIntensity > 0.001) {
+          camera.position.x += (Math.random() - 0.5) * cameraShakeIntensity;
+          camera.position.y += (Math.random() - 0.5) * cameraShakeIntensity;
+          cameraShakeIntensity = Math.max(0, cameraShakeIntensity - frameDt * 0.9);
+        }
+
+        // Look 5 meters ahead of player car along canonical forward (-Z)
+        const cameraLookTarget = player3D.root.position.clone().add(new THREE.Vector3(0, 0.6, 0)).add(forward.clone().multiplyScalar(5));
         camera.lookAt(cameraLookTarget);
 
-        // --- 7. REAL-TIME SPEED & HUD METRICS UPDATES ---
-        const actualKmh = Math.round(playerVel.length() * 3.6);
-        const forwardSpeedVal = Math.round(playerVel.dot(forward) * 10) / 10;
+        // --- 6. REAL-TIME SPEED & HUD METRICS UPDATES ---
+        const actualKmh = Math.round(playerState.speed * 3.6);
+        const fwdSpeedVal = Math.round((playerState.vx * forward.x + playerState.vz * forward.z) * 10) / 10;
         setSpeedKmhDisplay(actualKmh);
         setPlayerHp(Math.round(playerState.hp));
         setPlayerScore(playerState.score);
 
-        const aliveCount = allVehiclesList.filter((v) => !v.isDestroyed && v.hp > 0).length;
+        // High frequency 25Hz network transform sync
+        if (performance.now() - lastNetworkSyncTime > 40) {
+          lastNetworkSyncTime = performance.now();
+          if (onTransformSyncRef.current) {
+            onTransformSyncRef.current({
+              x: playerState.x,
+              y: playerState.y || 0,
+              z: playerState.z,
+              rotationY: playerState.rotationY,
+              vx: playerState.vx,
+              vy: playerState.vy || 0,
+              vz: playerState.vz,
+            });
+          }
+        }
+
+        // Alive count: strictly from server-authoritative count
+        const aliveCount = serverAliveCountRef.current ?? allVehicleStates.filter((v) => !v.isDestroyed && v.hp > 0).length;
         setOpponentsAliveCount(aliveCount);
-        const elapsedSec = Math.floor((Date.now() - matchStartTime) / 1000);
+        const elapsedSec = matchStartTime > 0 ? Math.floor((Date.now() - matchStartTime) / 1000) : 0;
         setMatchTimeSec(elapsedSec);
 
         setDebugMetrics({
@@ -880,36 +877,58 @@ export function DemolitionDerbyCanvas({
           inputS: inputKeys.current.backward,
           inputD: inputKeys.current.right,
           inputSpace: inputKeys.current.handbrake,
-          posX: Math.round(player3D.root.position.x * 10) / 10,
-          posY: Math.round(player3D.root.position.y * 10) / 10,
-          posZ: Math.round(player3D.root.position.z * 10) / 10,
-          velX: Math.round(playerVel.x * 10) / 10,
-          velY: Math.round(playerVel.y * 10) / 10,
-          velZ: Math.round(playerVel.z * 10) / 10,
+          posX: Math.round(playerState.x * 10) / 10,
+          posY: Math.round((playerState.y || 0) * 10) / 10,
+          posZ: Math.round(playerState.z * 10) / 10,
+          velX: Math.round(playerState.vx * 10) / 10,
+          velY: Math.round(playerState.vy * 10) / 10,
+          velZ: Math.round(playerState.vz * 10) / 10,
           speedKmh: actualKmh,
-          forwardSpeed: forwardSpeedVal,
+          forwardSpeed: fwdSpeedVal,
           colliderCount: arena3D.colliders.length,
           gameLoopActive: true,
+          aiTargets: [],
         });
 
-        // --- 8. MATCH END CHECK ---
-        const aliveVehicles = allVehiclesList.filter((v) => !v.isDestroyed && v.hp > 0);
-        if (playerState.isDestroyed || playerState.hp <= 0 || aliveVehicles.length <= 1) {
-          currentMatchState = 'FINISHED';
-          setMatchState('FINISHED');
-          derbySoundSystem.stopEngineSound();
+        // --- 7. CALCULATE 3D PROJECTIONS FOR FLOATING HEALTH BARS ---
+        const projVec = new THREE.Vector3();
+        const activeBars: {
+          id: string;
+          name: string;
+          isPlayer: boolean;
+          hp: number;
+          maxHp: number;
+          screenX: number;
+          screenY: number;
+        }[] = [];
 
-          const rank = aliveVehicles.length <= 1 && !playerState.isDestroyed ? 1 : aliveVehicles.length + 1;
-          const isWin = rank === 1;
-          const survivalTime = Math.round((Date.now() - matchStartTime) / 1000);
+        allVehicleStates.forEach((v) => {
+          if (v.isDestroyed || v.hp <= 0) return;
+          if (v.isPlayer) return;
 
-          derbySoundSystem.playFanfare(isWin);
-          setTimeout(() => {
-            onMatchCompleteRef.current(rank, playerState.score, playerState.eliminations, playerState.damageDealt, survivalTime, isWin);
-          }, 1200);
-        }
+          projVec.set(v.x, (v.y || 0) + 1.9, v.z);
+          projVec.project(camera);
 
-        // --- 9. SYNC HUD & MINIMAP AT ~10FPS ---
+          if (projVec.z > 1.0 || projVec.x < -1.1 || projVec.x > 1.1 || projVec.y < -1.1 || projVec.y > 1.1) {
+            return;
+          }
+
+          const sx = (projVec.x * 0.5 + 0.5) * width;
+          const sy = (-(projVec.y * 0.5) + 0.5) * height;
+
+          activeBars.push({
+            id: v.id,
+            name: v.name,
+            isPlayer: v.isPlayer,
+            hp: Math.max(0, Math.round(v.hp)),
+            maxHp: v.maxHp,
+            screenX: sx,
+            screenY: sy,
+          });
+        });
+        setFloatingHealthBars(activeBars);
+
+        // --- 8. SYNC HUD & MINIMAP AT ~10FPS ---
         if (performance.now() - lastHudUpdateTime > 100) {
           lastHudUpdateTime = performance.now();
           if (onHudUpdateRef.current) {
@@ -917,8 +936,9 @@ export function DemolitionDerbyCanvas({
               Math.round(playerState.hp),
               playerState.score,
               playerState.combo,
-              aliveVehicles.length,
-              elapsedSec
+              aliveCount,
+              elapsedSec,
+              totalCombatants
             );
           }
           renderMinimap(vehiclesStateMap, arenaDef);
@@ -929,6 +949,270 @@ export function DemolitionDerbyCanvas({
     };
 
     animFrameId = requestAnimationFrame(gameLoop);
+
+    // Multiplayer Socket Synchronization Listeners
+    const socket = socketService.getSocket();
+    let cleanupSockets = () => {};
+
+    if (socket) {
+      const handleServerCountdown = (data: any) => {
+        const cv = data.countdownValue;
+        if (typeof cv === 'number') {
+          setCountdownNum(String(cv));
+          if (cv > 1) derbySoundSystem.playCountdownBeep(false);
+        }
+      };
+
+      const handleServerGameStarted = (data: any) => {
+        setCountdownNum('GO!');
+        currentMatchState = 'PLAYING';
+        matchStartTime = Date.now();
+        setMatchState('PLAYING');
+        derbySoundSystem.playCountdownBeep(true);
+        derbySoundSystem.startEngineSound();
+        setTimeout(() => setCountdownNum(''), 1000);
+
+        // Synchronize all vehicles with fresh authoritative server states
+        if (data && Array.isArray(data.playerStates)) {
+          data.playerStates.forEach((sp: any) => {
+            const vState = vehiclesStateMap.get(sp.userId || sp.playerId);
+            if (vState) {
+              vState.hp = sp.hp ?? 100;
+              vState.maxHp = sp.maxHp ?? 100;
+              vState.score = sp.score ?? 0;
+              vState.eliminations = sp.eliminations ?? 0;
+              vState.damageDealt = sp.damageDealt ?? 0;
+              vState.isDestroyed = false;
+              if (vState.isPlayer) {
+                setPlayerHp(Math.round(vState.hp));
+                setPlayerScore(vState.score);
+              }
+            }
+          });
+          if (typeof data.totalPlayers === 'number') {
+            serverAliveCountRef.current = data.totalPlayers;
+            setOpponentsAliveCount(data.totalPlayers);
+          }
+        }
+      };
+
+      const handlePlayerSync = ({ userId, x, y, z, rotationY, vx, vy, vz, hp, score }: any) => {
+        if (userId === localUserIdRef.current) return;
+        const vState = vehiclesStateMap.get(userId);
+        const v3D = vehicle3DMeshesMap.get(userId);
+        if (vState && v3D) {
+          vState.x = x;
+          vState.y = y;
+          vState.z = z;
+          vState.rotationY = rotationY;
+          vState.vx = vx;
+          vState.vy = vy;
+          vState.vz = vz;
+          if (typeof hp === 'number') {
+            vState.hp = hp;
+          }
+          if (typeof score === 'number') {
+            vState.score = score;
+          }
+          v3D.root.position.set(x, y, z);
+          v3D.root.rotation.y = rotationY;
+        }
+      };
+
+      const handleCollisionEffect = (data: any) => {
+        if (typeof data.stateVersion === 'number') {
+          if (data.stateVersion >= lastStateVersionRef.current) {
+            lastStateVersionRef.current = data.stateVersion;
+            setServerStateVersion(data.stateVersion);
+          }
+        }
+        if (data.targetId) {
+          const targetState = vehiclesStateMap.get(data.targetId);
+          if (targetState) {
+            if (data.targetHp !== undefined) {
+              targetState.hp = data.targetHp;
+              if (targetState.isPlayer || data.targetId === localUserIdRef.current) {
+                setPlayerHp(Math.round(targetState.hp));
+              }
+            }
+            if (data.targetScore !== undefined) {
+              targetState.score = data.targetScore;
+              if (targetState.isPlayer || data.targetId === localUserIdRef.current) {
+                setPlayerScore(targetState.score);
+              }
+            }
+          }
+        }
+        if (data.attackerId) {
+          const attackerState = vehiclesStateMap.get(data.attackerId);
+          if (attackerState && data.attackerScore !== undefined) {
+            attackerState.score = data.attackerScore;
+            if (attackerState.isPlayer || data.attackerId === localUserIdRef.current) {
+              setPlayerScore(attackerState.score);
+            }
+          }
+        }
+        if (data.hitX != null && data.hitZ != null) {
+          particleSystem.emitSparks(data.hitX, (data.hitY || 0.5) + 0.5, data.hitZ, 16);
+          particleSystem.emitSmokeAndFire(data.hitX, (data.hitY || 0.5) + 0.5, data.hitZ, data.impactType === 'CRITICAL');
+        }
+        if (data.impactType === 'CRITICAL' || data.impactType === 'HEAVY') {
+          derbySoundSystem.playImpact(data.impactType);
+        } else {
+          derbySoundSystem.playImpact('NORMAL');
+        }
+        if (data.attackerId === localUserIdRef.current && data.points > 0) {
+          pushNotification(
+            data.impactType === 'CRITICAL' ? `CRITICAL SMASH! +${data.points}` : `HIT! +${data.points}`,
+            data.points,
+            data.impactType
+          );
+        } else if (data.targetId === localUserIdRef.current && data.damageSource === 'ENVIRONMENT') {
+          pushNotification(
+            `WALL IMPACT -${data.damage || 5} HP`,
+            data.points || -(data.damage || 5),
+            'NORMAL'
+          );
+        }
+      };
+
+      // Canonical Game State Update from Server
+      const handleGameStateUpdate = (data: any) => {
+        if (!data) return;
+        if (typeof data.stateVersion === 'number') {
+          if (data.stateVersion < lastStateVersionRef.current) {
+            console.log(`[CLIENT IGNORE OLD PACKET] version=${data.stateVersion} < current=${lastStateVersionRef.current}`);
+            return;
+          }
+          lastStateVersionRef.current = data.stateVersion;
+          setServerStateVersion(data.stateVersion);
+        }
+        if (data.matchId) {
+          setServerMatchId(data.matchId);
+        }
+
+        console.log(`[RECEIVED MATCH STATE] match=${data.matchId} version=${data.stateVersion} ${data.players?.map((p: any) => `${p.name || p.userId}=${p.hp}`).join(' ')}`);
+
+        if (data && Array.isArray(data.players)) {
+          data.players.forEach((sp: any) => {
+            const pId = sp.id || sp.userId || sp.playerId;
+            const vState = vehiclesStateMap.get(pId);
+            if (vState) {
+              vState.hp = sp.hp;
+              vState.maxHp = sp.maxHp;
+              vState.score = sp.score;
+              vState.eliminations = sp.eliminations;
+              vState.damageDealt = sp.damageDealt;
+              vState.isDestroyed = !sp.alive;
+              if (vState.isPlayer || pId === localUserIdRef.current) {
+                setPlayerHp(Math.round(vState.hp));
+                setPlayerScore(vState.score);
+              }
+            }
+          });
+        }
+        if (typeof data.aliveCount === 'number') {
+          serverAliveCountRef.current = data.aliveCount;
+          setOpponentsAliveCount(data.aliveCount);
+        }
+      };
+
+      const handlePlayerEliminated = (data: any) => {
+        const elimId = data.eliminatedId || data.userId;
+        const atkId = data.attackerId || data.eliminatedBy;
+        const remCount = data.remainingPlayers !== undefined ? data.remainingPlayers : data.aliveCount;
+
+        const vState = vehiclesStateMap.get(elimId);
+        const v3D = vehicle3DMeshesMap.get(elimId);
+        if (vState) {
+          vState.isDestroyed = true;
+          vState.hp = 0;
+          vState.rank = data.rank || vState.rank;
+          if (v3D) {
+            particleSystem.emitSparks(vState.x, 1.0, vState.z, 25);
+            particleSystem.emitSmokeAndFire(vState.x, 1.0, vState.z, true);
+            derbySoundSystem.playExplosion();
+          }
+        }
+        if (remCount !== undefined) {
+          serverAliveCountRef.current = remCount;
+          setOpponentsAliveCount(remCount);
+        }
+        if (elimId === localUserIdRef.current) {
+          pushNotification('VEHICLE TOTALED!', 0, 'ELIMINATION');
+        } else if (atkId === localUserIdRef.current) {
+          pushNotification('WRECKED OPPONENT! +300', 300, 'ELIMINATION');
+        }
+      };
+
+      const handlePlayerDisconnected = (data: any) => {
+        const dcId = data.userId;
+        const remCount = data.remainingPlayers;
+
+        const vState = vehiclesStateMap.get(dcId);
+        const v3D = vehicle3DMeshesMap.get(dcId);
+        if (vState) {
+          vState.isDestroyed = true;
+          vState.hp = 0;
+          vState.connected = false;
+        }
+        if (v3D) {
+          scene.remove(v3D.root);
+          vehicle3DMeshesMap.delete(dcId);
+          vehiclesStateMap.delete(dcId);
+        }
+        if (remCount !== undefined) {
+          serverAliveCountRef.current = remCount;
+          setOpponentsAliveCount(remCount);
+        }
+        if (dcId !== localUserIdRef.current) {
+          pushNotification('OPPONENT DISCONNECTED', 0, 'NORMAL');
+        }
+      };
+
+      const handleGameOver = (data: any) => {
+        currentMatchState = 'FINISHED';
+        setMatchState('FINISHED');
+        derbySoundSystem.stopEngineSound();
+        if (data && data.results) {
+          const myResult = data.results.find((r: any) => r.userId === localUserIdRef.current || r.playerId === localUserIdRef.current);
+          const isWin = myResult ? myResult.rank === 1 : false;
+          derbySoundSystem.playFanfare(isWin);
+          if (onMatchCompleteRef.current) {
+            onMatchCompleteRef.current(
+              myResult?.rank || 1,
+              myResult?.score || playerState.score,
+              myResult?.eliminations || playerState.eliminations,
+              myResult?.damageDealt || playerState.damageDealt,
+              myResult?.survivalTime || Math.round((Date.now() - matchStartTime) / 1000),
+              isWin
+            );
+          }
+        }
+      };
+
+      socket.on('game_countdown', handleServerCountdown);
+      socket.on('game_started', handleServerGameStarted);
+      socket.on('derby_player_sync', handlePlayerSync);
+      socket.on('derby_collision_effect', handleCollisionEffect);
+      socket.on('derby_game_state_update', handleGameStateUpdate);
+      socket.on('derby_player_eliminated', handlePlayerEliminated);
+      socket.on('derby_vehicle_eliminated', handlePlayerEliminated);
+      socket.on('derby_player_disconnected', handlePlayerDisconnected);
+      socket.on('game_over', handleGameOver);
+
+      cleanupSockets = () => {
+        socket.off('game_countdown', handleServerCountdown);
+        socket.off('game_started', handleServerGameStarted);
+        socket.off('derby_player_sync', handlePlayerSync);
+        socket.off('derby_collision_effect', handleCollisionEffect);
+        socket.off('derby_game_state_update', handleGameStateUpdate);
+        socket.off('derby_player_eliminated', handlePlayerEliminated);
+        socket.off('derby_vehicle_eliminated', handlePlayerEliminated);
+        socket.off('derby_player_disconnected', handlePlayerDisconnected);
+        socket.off('game_over', handleGameOver);
+      };
+    }
 
     const handleResize = () => {
       if (!containerRef.current) return;
@@ -941,10 +1225,7 @@ export function DemolitionDerbyCanvas({
     window.addEventListener('resize', handleResize);
 
     return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
-      clearTimeout(timer4);
+      cleanupSockets();
       cancelAnimationFrame(animFrameId);
       window.removeEventListener('resize', handleResize);
       derbySoundSystem.stopEngineSound();
@@ -954,7 +1235,8 @@ export function DemolitionDerbyCanvas({
       }
       renderer.dispose();
     };
-  }, [arenaId, difficulty, playerVehicleId, playerUpgrades, isMultiplayer, localUserId, localNickname]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerVehicleId]); // arenaId intentionally excluded — locked via lockedArenaIdRef at mount
 
   // Push Combat Notification Helper
   const pushNotification = (text: string, points: number, type: any) => {
@@ -1080,7 +1362,9 @@ export function DemolitionDerbyCanvas({
         <div className="bg-neutral-950/85 border border-white/10 px-5 py-2 rounded-2xl backdrop-blur-md shadow-2xl flex items-center gap-4">
           <div className="text-center">
             <div className="text-[10px] text-amber-500 font-extrabold uppercase tracking-widest">ARENA</div>
-            <div className="text-xs font-black text-white uppercase tracking-wider">DIRT STADIUM</div>
+            <div className="text-xs font-black text-white uppercase tracking-wider">
+              {(ARENAS[arenaId] || ARENAS.arena_1).name.toUpperCase()}
+            </div>
           </div>
           <div className="h-6 w-px bg-white/15" />
           <div className="text-center">
@@ -1099,7 +1383,7 @@ export function DemolitionDerbyCanvas({
         <div className="h-6 w-px bg-white/15" />
         <div>
           <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">ALIVE</div>
-          <div className="text-lg font-black text-amber-400 tabular-nums">{opponentsAliveCount} / 8</div>
+          <div className="text-lg font-black text-amber-400 tabular-nums">{opponentsAliveCount} / {totalCombatantsCount}</div>
         </div>
       </div>
 
@@ -1120,6 +1404,36 @@ export function DemolitionDerbyCanvas({
           </div>
         ))}
       </div>
+
+      {/* FLOATING WORLD-SPACE HEALTH BARS ABOVE AI VEHICLES */}
+      {floatingHealthBars.map((bar) => {
+        const hpPercent = Math.max(0, Math.min(100, (bar.hp / bar.maxHp) * 100));
+        const barColor = hpPercent > 60 ? 'bg-emerald-500' : hpPercent > 30 ? 'bg-amber-500' : 'bg-red-600';
+
+        return (
+          <div
+            key={bar.id}
+            className="absolute top-0 left-0 -translate-x-1/2 -translate-y-full pointer-events-none z-20 transition-transform duration-75"
+            style={{
+              transform: `translate3d(${bar.screenX}px, ${bar.screenY}px, 0)`,
+            }}
+          >
+            <div className="bg-neutral-950/90 border border-white/20 px-2.5 py-1 rounded-lg backdrop-blur-md shadow-2xl min-w-[108px] text-center select-none">
+              <div className="flex justify-between items-center text-[10px] font-black tracking-wider mb-0.5 gap-2">
+                <span className="text-white uppercase truncate max-w-[65px] drop-shadow-sm">{bar.name}</span>
+                <span className="text-gray-300 font-mono text-[9px]">{bar.hp} / {bar.maxHp}</span>
+              </div>
+              {/* Health Bar Progress Track */}
+              <div className="w-full bg-neutral-900 h-2.5 rounded-sm overflow-hidden border border-black/70 p-0.5">
+                <div
+                  className={`h-full rounded-xs transition-all duration-75 ${barColor}`}
+                  style={{ width: `${hpPercent}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })}
 
       {/* DEVELOPMENT DEBUG PANEL & WIREFRAME COLLIDERS (F3 KEY TOGGLE) */}
       {showDebugOverlay && (
@@ -1153,6 +1467,24 @@ export function DemolitionDerbyCanvas({
             <div>ACTIVE COLLIDERS: {debugMetrics.colliderCount}</div>
             <div>GAME LOOP: <span className="text-emerald-400 font-bold">{debugMetrics.gameLoopActive ? 'ACTIVE' : 'INACTIVE'}</span></div>
           </div>
+
+          {isMultiplayer && (
+            <div className="space-y-0.5 border-t border-amber-500/30 pt-1 text-[10px]">
+              <div className="text-amber-400 font-bold uppercase">MULTIPLAYER SYNC</div>
+              <div>MATCH: <span className="text-white truncate block">{serverMatchId || gameId || 'ACTIVE'}</span></div>
+              <div>VERSION: <span className="text-emerald-400 font-bold">{serverStateVersion}</span></div>
+              <div>LOCAL HP: <span className="text-emerald-400 font-bold">{playerHp} / 100</span></div>
+            </div>
+          )}
+
+          {debugMetrics.aiTargets.length > 0 && (
+            <div className="space-y-0.5 border-t border-white/10 pt-1 text-[9px]">
+              <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">AI TARGETS</div>
+              {debugMetrics.aiTargets.map((t, idx) => (
+                <div key={idx} className="text-amber-200 truncate">{t}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

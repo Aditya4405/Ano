@@ -11,6 +11,7 @@ const MAX_PLAYERS = {
   'PAPER_FALL': 8,
   'ARROW_MAZE': 8,
   'ULTIMATE_TIC_TAC_TOE': 2,
+  'DEMOLITION_DERBY': 8,
 };
 const DEFAULT_MAX_PLAYERS = 6;
 
@@ -19,15 +20,16 @@ class LobbyService {
     this.lobbies = new Map(); // lobbyId -> { id, hostId, gameType, players: Map(userId -> { userId, nickname, isReady, role }), status: "WAITING" }
   }
 
-  async createLobby(lobbyId, hostId, hostName, gameType) {
+  async createLobby(lobbyId, hostId, hostName, gameType, customSettings = {}) {
+    const hostCarId = customSettings?.selectedCarId || 'road_crusher';
     const lobby = {
       id: lobbyId,
       hostId,
       gameType,
-      players: new Map([[hostId, { userId: hostId, nickname: hostName, isReady: true, role: 'HOST' }]]),
+      players: new Map([[hostId, { userId: hostId, nickname: hostName, isReady: true, role: 'HOST', selectedCarId: hostCarId }]]),
       status: 'WAITING',
       settings: {
-        maxPlayers: MAX_PLAYERS[gameType] || DEFAULT_MAX_PLAYERS,
+        maxPlayers: customSettings?.maxPlayers || MAX_PLAYERS[gameType] || DEFAULT_MAX_PLAYERS,
         boardSize: gameType === 'COLOR_WARS' ? 7 : (gameType === 'DOTS_AND_BOXES' ? 5 : undefined), // Default 7x7 for Color Wars
         turnTimer: (gameType === 'COLOR_WARS' || gameType === 'DOTS_AND_BOXES' || gameType === 'CHAMBER_CLASH' || gameType === 'ULTIMATE_TIC_TAC_TOE') ? 30 : undefined, // 30s turn timer
         pairCount: gameType === 'MEMORY_MATCH' ? 12 : undefined, // Default 12 pairs (4x6) for Memory Match
@@ -38,6 +40,10 @@ class LobbyService {
         levelCount: gameType === 'ARROW_MAZE' ? 10 : undefined,
         timedDuration: gameType === 'ARROW_MAZE' ? 180 : undefined,
         deadTimeLimit: gameType === 'ARROW_MAZE' ? 60 : undefined,
+        arenaId: gameType === 'DEMOLITION_DERBY' ? (customSettings?.arenaId || 'arena_1') : undefined,
+        arenaIndex: gameType === 'DEMOLITION_DERBY' ? (customSettings?.arenaIndex || 1) : undefined,
+        normalizedStats: gameType === 'DEMOLITION_DERBY' ? (customSettings?.normalizedStats ?? true) : undefined,
+        ...(customSettings || {}),
       }
     };
     this.lobbies.set(lobbyId, lobby);
@@ -46,15 +52,26 @@ class LobbyService {
     return lobby;
   }
 
-  async joinLobby(lobbyId, userId, nickname) {
+  async joinLobby(lobbyId, userId, nickname, extraData = {}) {
     const lobby = this.lobbies.get(lobbyId);
     if (!lobby) return null;
     const maxPlayers = lobby.settings?.maxPlayers || MAX_PLAYERS[lobby.gameType] || DEFAULT_MAX_PLAYERS;
     if (lobby.players.size >= maxPlayers) return null; // limit to max players
 
-    const player = { userId, nickname, isReady: false, role: 'PLAYER' };
+    const selectedCarId = extraData?.selectedCarId || 'road_crusher';
+    const player = { userId, nickname, isReady: false, role: 'PLAYER', selectedCarId };
     lobby.players.set(userId, player);
     await GamePersistenceService.addPlayer(lobbyId, userId, nickname, 'PLAYER');
+    return lobby;
+  }
+
+  selectCar(lobbyId, userId, carId) {
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) return null;
+    const player = lobby.players.get(userId);
+    if (player) {
+      player.selectedCarId = carId;
+    }
     return lobby;
   }
 
