@@ -64,11 +64,19 @@ class LobbyService {
     const affectedLobbies = await this.removeUserFromAllLobbies(hostId, lobbyId);
 
     const hostCarId = customSettings?.selectedCarId || 'road_crusher';
+    const isHostAssetReady = customSettings?.assetReady ?? true;
     const lobby = {
       id: lobbyId,
       hostId,
       gameType,
-      players: new Map([[hostId, { userId: hostId, nickname: hostName, isReady: true, role: 'HOST', selectedCarId: hostCarId }]]),
+      players: new Map([[hostId, {
+        userId: hostId,
+        nickname: hostName,
+        isReady: true,
+        role: 'HOST',
+        selectedCarId: hostCarId,
+        assetReady: isHostAssetReady
+      }]]),
       status: 'WAITING',
       settings: {
         maxPlayers: customSettings?.maxPlayers || MAX_PLAYERS[gameType] || DEFAULT_MAX_PLAYERS,
@@ -108,12 +116,14 @@ class LobbyService {
 
     const isHost = lobby.hostId === userId;
     const selectedCarId = extraData?.selectedCarId || 'road_crusher';
+    const isJoinerAssetReady = extraData?.assetReady ?? true;
     const player = {
       userId,
       nickname,
       isReady: isHost,
       role: isHost ? 'HOST' : 'PLAYER',
-      selectedCarId
+      selectedCarId,
+      assetReady: isJoinerAssetReady
     };
     lobby.players.set(userId, player);
     await GamePersistenceService.addPlayer(lobbyId, userId, nickname, player.role).catch(() => {});

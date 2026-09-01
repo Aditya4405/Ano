@@ -231,6 +231,8 @@ export interface DerbyLobbyPlayer {
   isReady: boolean;
   role: 'HOST' | 'PLAYER';
   selectedCarId?: VehicleId;
+  vehicleId?: VehicleId;
+  assetReady?: boolean;
 }
 
 export interface DerbyRoomState {

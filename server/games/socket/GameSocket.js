@@ -95,12 +95,13 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
   });
 
   socket.on('lobby_create', async (payload) => {
-    const { gameType, userId, nickname, selectedCarId, arenaId, settings, ...extraSettings } = payload || {};
-    console.log(`Lobby create requested by ${nickname} (${userId}) for ${gameType} car=${selectedCarId}`);
+    const { gameType, userId, nickname, selectedCarId, arenaId, assetReady, settings, ...extraSettings } = payload || {};
+    console.log(`Lobby create requested by ${nickname} (${userId}) for ${gameType} car=${selectedCarId} assetReady=${assetReady}`);
     const gameId = `game_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const customSettings = {
       ...(selectedCarId ? { selectedCarId } : {}),
       ...(arenaId ? { arenaId } : {}),
+      assetReady: assetReady !== undefined ? Boolean(assetReady) : true,
       ...(settings || {}),
       ...extraSettings
     };
@@ -126,11 +127,12 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
   });
 
   socket.on('lobby_join', async (payload) => {
-    const { gameId, userId, nickname, selectedCarId, ...extraData } = payload || {};
-    console.log(`Player ${nickname} (${userId}) joined lobby ${gameId} with car=${selectedCarId}`);
+    const { gameId, userId, nickname, selectedCarId, assetReady, ...extraData } = payload || {};
+    console.log(`Player ${nickname} (${userId}) joined lobby ${gameId} with car=${selectedCarId} assetReady=${assetReady}`);
 
     const { lobby, affectedLobbies } = await LobbyService.joinLobby(gameId, userId, nickname, {
       selectedCarId,
+      assetReady: assetReady !== undefined ? Boolean(assetReady) : true,
       ...extraData
     });
     if (!lobby) {
@@ -181,6 +183,26 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
       player.assetReady = true;
       console.log(`[ASSET READY] Player ${userId} assets ready (${assetVersion}) in lobby ${gameId}`);
     }
+
+    io.to(gameId).emit('lobby_state', serializeLobby(lobby));
+    broadcastLobbies();
+  });
+
+  // ── DEMOLITION DERBY: Client reports all 3D vehicle & arena assets finished loading ──
+  socket.on('derby_assets_ready', ({ gameId, userId, selectedCarId }) => {
+    const lobby = LobbyService.getLobby(gameId);
+    if (!lobby) return;
+    let player = lobby.players.get(userId);
+    if (!player && userId) {
+      player = Array.from(lobby.players.values()).find(p => p.userId === userId);
+    }
+    if (!player) return;
+
+    player.assetReady = true;
+    if (selectedCarId) {
+      player.selectedCarId = selectedCarId;
+    }
+    console.log(`[DERBY ASSETS READY] Player ${userId} (${player.nickname}) vehicle ${player.selectedCarId || 'road_crusher'} assets ready in lobby ${gameId}`);
 
     io.to(gameId).emit('lobby_state', serializeLobby(lobby));
     broadcastLobbies();

@@ -14,9 +14,17 @@ import {
 import { derbySoundSystem } from './DerbySoundSystem';
 import { socketService } from '@/lib/socket';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Vehicle3DTurntablePreview } from './Vehicle3DTurntablePreview';
 import { preloadAllDerbyGLTFModels } from './Derby3DVehicleBuilder';
+import { GlassCard } from '@/components/layout/GlassCard';
+import { API_URL } from '@/lib/config';
+import { useInviteCooldown } from '@/hooks/useInviteCooldown';
+import { useExitWarning } from '@/hooks/useExitWarning';
+import { useGamePresence } from '@/hooks/useGamePresence';
+import GameChatDrawer from '@/components/games/common/GameChatDrawer';
+import { useGameChatStore } from '@/store/useGameChatStore';
+import { useDerbyAssetPreloader } from '@/hooks/useDerbyAssetPreloader';
 import {
   ArrowLeft,
   Play,
@@ -37,7 +45,43 @@ import {
   Zap,
   Gauge,
   Wrench,
+  BookOpen,
+  X,
+  Keyboard,
+  Globe,
+  UserPlus,
+  RotateCcw,
+  MessageSquare,
+  LogOut,
+  Crown,
+  Loader2,
 } from 'lucide-react';
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) {}
+
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    textArea.style.top = '-999999px';
+    textArea.setAttribute('readonly', '');
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    return successful;
+  } catch (err) {
+    return false;
+  }
+}
 
 type ActiveView =
   | 'MENU'
@@ -101,13 +145,80 @@ export function DemolitionDerbyGameHub() {
     sendSelectCar,
     sendSelectArena,
     sendTransformUpdate,
+    kickPlayer,
+    invitePlayer,
+    reportAssetsReady,
   } = useDemolitionDerbyStore();
+
+  const { progress: assetProgress, isReady: assetsReady, isError: assetError, failedAssets, retry: retryAssets } = useDerbyAssetPreloader();
 
   const [activeView, setActiveView] = useState<ActiveView>('MENU');
   const [directCode, setDirectCode] = useState<string>('');
+  const [copiedRoomCode, setCopiedRoomCode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [previewCarId, setPreviewCarId] = useState<VehicleId>(selectedVehicle || 'road_crusher');
   const [isHostArenaModalOpen, setIsHostArenaModalOpen] = useState(false);
   const [isLobbyGarageModalOpen, setIsLobbyGarageModalOpen] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
+
+  useEffect(() => {
+    if (assetsReady && roomState?.id && userId) {
+      reportAssetsReady(roomState.id, userId, selectedVehicle);
+    }
+  }, [assetsReady, roomState?.id, userId, selectedVehicle, reportAssetsReady]);
+
+  const { unreadCount: unreadChatCount, toggleChat } = useGameChatStore();
+  const { triggerInvite, getInviteStatus } = useInviteCooldown(roomState?.id);
+  const { bypassWarning } = useExitWarning(Boolean(roomState));
+
+  // Active game presence
+  useGamePresence('DEMOLITION_DERBY', activeView === 'GAMEPLAY', roomState?.id);
+
+  // Online Players & Friends
+  const [friendsList, setFriendsList] = useState<any[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<any[]>([]);
+
+  const fetchOnlineUsers = useCallback(() => {
+    if (!userId) return;
+    fetch(`${API_URL}/api/users/online`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) setOnlineUsers(data.filter((u: any) => u.id !== userId));
+      })
+      .catch(() => {});
+  }, [userId]);
+
+  const fetchFriends = useCallback(() => {
+    if (!userId) return;
+    fetch(`${API_URL}/api/notifications/friendships/${userId}`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) setFriendsList(data);
+      })
+      .catch(() => {});
+  }, [userId]);
+
+  useEffect(() => {
+    fetchOnlineUsers();
+    fetchFriends();
+  }, [fetchOnlineUsers, fetchFriends, roomState?.id]);
+
+  const handleSendInvite = (targetUserId: string) => {
+    if (!userId || !nickname) return;
+    if (!roomState) {
+      createLobby(userId, nickname, currentArena);
+      triggerInvite(targetUserId);
+    } else {
+      triggerInvite(targetUserId);
+      invitePlayer(roomState.id, userId, nickname, targetUserId);
+    }
+  };
+
+  const [isClient, setIsClient] = useState(false);
+  useEffect(() => {
+    setIsClient(true);
+    derbySoundSystem.setMuted(soundMuted);
+  }, [soundMuted]);
 
   useEffect(() => {
     setPreviewCarId(selectedVehicle);
@@ -183,6 +294,7 @@ export function DemolitionDerbyGameHub() {
   }, [roomState, activeView]);
 
   const handlePlaySound = (type: string) => {
+    if (soundMuted) return;
     if (type === 'click') derbySoundSystem.playClick();
   };
 
@@ -242,8 +354,8 @@ export function DemolitionDerbyGameHub() {
 
   // ── TOP COMPACT NAV BAR ────────────────────────────────────
   const renderNavbar = () => (
-    <div className="flex items-center justify-between px-4 py-2.5 bg-neutral-900 border-b border-white/10 flex-shrink-0 z-30 shadow-md">
-      <div className="flex items-center gap-3">
+    <header className="flex items-center justify-between px-3 py-2.5 sm:px-4 sm:py-3 bg-white/5 border-b border-white/10 flex-shrink-0 z-30 backdrop-blur-md font-sans w-full max-w-full">
+      <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
         {activeView !== 'MENU' ? (
           <button
             onClick={() => {
@@ -251,58 +363,167 @@ export function DemolitionDerbyGameHub() {
               if (roomState) leaveLobby(userId);
               setActiveView('MENU');
             }}
-            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer border border-white/10"
+            className="p-1.5 sm:p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer shrink-0"
             title="Back to Menu"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         ) : (
           <Link
             href="/dashboard/games"
-            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer border border-white/10"
+            className="p-1.5 sm:p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer shrink-0"
             title="Back to Arcade"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
           </Link>
         )}
 
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500 via-red-600 to-amber-700 flex items-center justify-center text-white font-black text-xs">
-            🏎️
-          </div>
-          <div>
-            <h1 className="text-sm font-black text-white tracking-wide uppercase flex items-center gap-2">
-              <span>Demolition Derby</span>
-            </h1>
-            <span className="text-[9px] text-amber-400 font-semibold tracking-wider uppercase block -mt-0.5">
-              Real-Time Multiplayer Derby
-            </span>
-          </div>
+        <Link href="/dashboard" className="flex items-center gap-2 sm:gap-3 cursor-pointer group hover:opacity-80 transition-opacity shrink-0">
+          <img src="/ano-logo.png" alt="Ano Logo" className="w-7 h-7 sm:w-8 sm:h-8 object-contain group-hover:scale-105 transition-transform flex-shrink-0" />
+          <span className="text-base sm:text-lg font-bold text-white tracking-wide">Ano</span>
+        </Link>
+
+        <div className="hidden sm:flex items-center gap-1.5 ml-1 sm:ml-2 border-l border-white/20 pl-3 sm:pl-4 min-w-0">
+          <span className="text-base sm:text-lg">🏎️</span>
+          <span className="text-sm sm:text-lg font-bold text-white tracking-wide truncate">Demolition Derby</span>
         </div>
       </div>
 
-      <div className="flex items-center gap-2.5">
-        <div className="flex items-center gap-1.5 px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/30 rounded-full text-amber-400 text-xs font-extrabold shadow-sm">
-          <Coins className="w-3 h-3 text-amber-400 shrink-0" />
+      <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+        <div className="flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1 bg-amber-500/10 border border-amber-500/30 rounded-full text-amber-400 text-xs sm:text-sm font-extrabold shadow-sm">
+          <Coins className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
           <span className="tabular-nums">{coins.toLocaleString()} C</span>
         </div>
 
-        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 bg-cyan-500/10 border border-cyan-500/30 rounded-full text-cyan-400 text-xs font-bold">
-          <Sparkles className="w-3 h-3 text-cyan-400" />
+        <div className="hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1 bg-cyan-500/10 border border-cyan-500/30 rounded-full text-cyan-400 text-xs sm:text-sm font-bold">
+          <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-400 shrink-0" />
           <span>{xp.toLocaleString()} XP</span>
         </div>
 
         <button
           onClick={() => {
             handlePlaySound('click');
+            setActiveView('GARAGE');
+          }}
+          className={`px-2.5 sm:px-3.5 py-1.5 border rounded-full text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+            activeView === 'GARAGE'
+              ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-sm'
+              : 'bg-white/5 border-white/10 text-gray-300 hover:text-white hover:bg-white/10 hover:border-white/20'
+          }`}
+          title="Garage & Upgrades"
+        >
+          <Wrench className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
+          <span className="hidden md:inline">Garage</span>
+        </button>
+
+        <button
+          onClick={() => {
+            handlePlaySound('click');
+            setShowRulesModal(true);
+          }}
+          className="px-2.5 sm:px-3.5 py-1.5 bg-white/5 border border-white/10 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors hover:bg-white/10 cursor-pointer"
+          title="Game Rules & Controls"
+        >
+          <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-orange-400 shrink-0" />
+          <span className="hidden xs:inline sm:inline">Rules</span>
+        </button>
+
+        <button
+          onClick={() => {
             toggleSound();
           }}
-          className="p-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-gray-300 hover:text-white transition-colors cursor-pointer"
+          className="p-1.5 sm:p-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white transition-all cursor-pointer shrink-0"
+          title={soundMuted ? 'Unmute Sound' : 'Mute Sound'}
         >
-          {soundMuted ? <VolumeX className="w-3.5 h-3.5 text-red-400" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
+          {soundMuted ? <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-400" /> : <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />}
         </button>
       </div>
-    </div>
+    </header>
+  );
+
+  // ── RULES & CONTROLS MODAL ────────────────────────────────
+  const renderRulesModal = () => (
+    <AnimatePresence>
+      {showRulesModal && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4"
+          onClick={() => setShowRulesModal(false)}
+        >
+          <motion.div
+            initial={{ scale: 0.95, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.95, y: 20 }}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-neutral-900 border border-white/10 rounded-2xl sm:rounded-3xl p-4 sm:p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto text-left relative shadow-2xl space-y-3.5 sm:space-y-4"
+          >
+            <div className="flex justify-between items-center pb-3 border-b border-white/10">
+              <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                <BookOpen className="w-4 h-4 sm:w-5 sm:h-5 text-orange-400" />
+                Demolition Derby Rules & Controls
+              </h2>
+              <button
+                onClick={() => setShowRulesModal(false)}
+                className="text-gray-400 hover:text-white p-1 hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs sm:text-sm text-gray-300">
+              <div className="bg-white/5 p-3 sm:p-3.5 rounded-xl border border-white/5 space-y-2">
+                <div className="font-bold text-amber-400 flex items-center gap-1.5 text-xs sm:text-sm">
+                  <Keyboard className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Vehicle Driving Controls
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px] sm:text-xs">
+                  <div className="bg-black/30 p-2 rounded-lg border border-white/5">
+                    <span className="text-white font-semibold block">W / ↑ Up</span>
+                    <span className="text-gray-400">Accelerate & Drive</span>
+                  </div>
+                  <div className="bg-black/30 p-2 rounded-lg border border-white/5">
+                    <span className="text-white font-semibold block">S / ↓ Down</span>
+                    <span className="text-gray-400">Reverse & Brake</span>
+                  </div>
+                  <div className="bg-black/30 p-2 rounded-lg border border-white/5">
+                    <span className="text-white font-semibold block">A / D / ← →</span>
+                    <span className="text-gray-400">Steer Left / Right</span>
+                  </div>
+                  <div className="bg-black/30 p-2 rounded-lg border border-white/5">
+                    <span className="text-white font-semibold block">Spacebar</span>
+                    <span className="text-gray-400">Handbrake Drift</span>
+                  </div>
+                </div>
+                <div className="text-[10px] text-gray-400">
+                  Tip: Press <kbd className="px-1 py-0.5 bg-white/10 rounded text-white font-mono">R</kbd> to reset your car upright if flipped over.
+                </div>
+              </div>
+
+              <div className="bg-white/5 p-3 sm:p-3.5 rounded-xl border border-white/5 space-y-1.5">
+                <div className="font-bold text-red-400 flex items-center gap-1.5 text-xs sm:text-sm">
+                  <Flame className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Crash & Destruction Physics
+                </div>
+                <ul className="list-disc pl-4 space-y-1 text-[11px] sm:text-xs text-gray-300">
+                  <li><span className="text-white font-semibold">Speed = Damage</span>: Higher velocity crashes deliver exponentially greater impact damage to opponents.</li>
+                  <li><span className="text-white font-semibold">T-Bone & Rear Collisions</span>: Hitting opponents perpendicular or from behind inflicts critical damage while protecting your front armor.</li>
+                  <li><span className="text-white font-semibold">Arena Hazards</span>: Watch out for barriers, ramps, pillars, and boundary walls.</li>
+                </ul>
+              </div>
+
+              <div className="bg-white/5 p-3 sm:p-3.5 rounded-xl border border-white/5 space-y-1.5">
+                <div className="font-bold text-cyan-400 flex items-center gap-1.5 text-xs sm:text-sm">
+                  <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Last Driver Standing
+                </div>
+                <p className="text-[11px] sm:text-xs text-gray-300 leading-relaxed">
+                  Survive against 2–8 real-time combatants. Total destruction eliminates vehicles. Wreck opponents to collect kill points, earn coins, XP, and unlock new arenas!
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 
   // ── 1. MAIN MENU VIEW ──────────────────────────────────────
@@ -759,85 +980,101 @@ export function DemolitionDerbyGameHub() {
         roomState.players.find((p) => p.userId === userId)?.role === 'HOST'
       )
     );
-    const hasMinPlayers = (roomState?.players?.length || 0) >= 2;
-    const allPlayersReady = roomState?.players?.every((p) => p.role === 'HOST' || p.isReady) ?? false;
-    const canStart = isHost && hasMinPlayers && allPlayersReady;
+    const players = roomState?.players || [];
+    const hasMinPlayers = players.length >= 2;
+    const allPlayersReady = players.every((p) => p.role === 'HOST' || p.isReady);
+    const isPlayerAssetReady = (p: any) => Boolean(p.assetReady || (p.userId === userId && assetsReady));
+    const allPlayersAssetsReady = players.length >= 2 && players.every(isPlayerAssetReady);
+    const unreadyAssetPlayers = players.filter((p: any) => !isPlayerAssetReady(p));
+    const waitingForAssetsStr = unreadyAssetPlayers.map((p) => p.nickname).join(', ');
+    const canStart = isHost && hasMinPlayers && allPlayersReady && allPlayersAssetsReady;
     const currentLobbyArena = ARENAS[roomState?.settings?.arenaId || currentArena] || ARENAS.arena_1;
+    const derbyLobbies = availableLobbies.filter((l) => l.gameType === 'DEMOLITION_DERBY' || !l.gameType);
 
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-        <div className="max-w-xl w-full space-y-6 my-auto text-center">
+    // ==========================================
+    // PRE-LOBBY MULTIPLAYER HUB (MATCHING MEMORY MATCH)
+    // ==========================================
+    if (!roomState) {
+      return (
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-6xl w-full mx-auto space-y-6">
           {lobbyError && (
-            <div className="p-3 bg-red-500/20 border border-red-500/40 rounded-xl text-red-300 text-xs font-bold flex items-center justify-between">
+            <div className="p-3 bg-red-500/20 border border-red-500/40 rounded-2xl text-red-300 text-xs font-bold flex items-center justify-between shadow-lg">
               <span>{lobbyError}</span>
-              <button onClick={clearLobbyError} className="text-red-400 hover:text-white font-bold ml-2">✕</button>
+              <button onClick={clearLobbyError} className="text-red-400 hover:text-white font-bold ml-2 cursor-pointer">✕</button>
             </div>
           )}
 
-          {!roomState ? (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-500/10 border border-amber-500/30 rounded-full text-amber-400 text-xs font-bold uppercase tracking-widest">
-                  <Flame className="w-3.5 h-3.5" /> MULTIPLAYER ARENA
-                </div>
-                <h2 className="text-3xl md:text-4xl font-black text-white uppercase tracking-wide">
-                  DEMOLITION DERBY
-                </h2>
-                <p className="text-gray-400 text-xs md:text-sm">
-                  Create a battle room or join friends to compete in real-time destruction
-                </p>
-              </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left 2 Cols: Hero Banner, Direct Join, & Open Lobbies */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* Create Match Hero Card */}
+              <GlassCard className="p-6 sm:p-8 text-left relative overflow-hidden bg-gradient-to-br from-amber-950/40 via-neutral-900 to-black border border-amber-500/20">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
+                  <div className="w-20 h-20 bg-gradient-to-br from-amber-500 via-red-600 to-amber-700 rounded-3xl flex items-center justify-center text-4xl shadow-2xl flex-shrink-0">
+                    🏎️
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-0.5 bg-amber-500/10 border border-amber-500/30 rounded-full text-amber-400 text-[10px] font-extrabold uppercase tracking-wider mb-2">
+                      <Flame className="w-3 h-3 text-amber-500" /> Real-Time 3D Multiplayer
+                    </div>
+                    <h2 className="text-2xl sm:text-3xl font-black text-white tracking-wide uppercase mb-1">
+                      Demolition Derby Arena
+                    </h2>
+                    <p className="text-sm text-gray-400 mb-4 leading-relaxed">
+                      Battle against 2–8 drivers in high-speed destructive combat. Crash opponents, deal ramming damage, and be the last car running!
+                    </p>
 
-              {/* Equipped Car Mini Banner */}
-              <div className="flex items-center justify-between p-3.5 bg-neutral-900 border border-white/10 rounded-2xl text-left">
-                <div className="flex items-center gap-3">
-                  <div className="w-4 h-4 rounded-full border border-white/20" style={{ backgroundColor: selectedVehicleDef.color }} />
-                  <div>
-                    <div className="text-[10px] text-gray-400 uppercase font-bold">Equipped Car</div>
-                    <div className="text-sm font-black text-white">{selectedVehicleDef.name}</div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        disabled={isCreatingLobby}
+                        onClick={() => {
+                          handlePlaySound('click');
+                          createLobby(userId, nickname, currentArena);
+                        }}
+                        className={`px-6 py-3.5 bg-gradient-to-r from-amber-500 via-red-600 to-amber-600 hover:from-amber-400 hover:to-red-500 rounded-xl font-black text-sm uppercase tracking-wider text-white shadow-xl shadow-amber-500/25 transition-all flex items-center gap-2 ${
+                          isCreatingLobby ? 'opacity-70 cursor-wait' : 'cursor-pointer hover:scale-105 active:scale-95'
+                        }`}
+                      >
+                        {isCreatingLobby ? (
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Play className="w-4 h-4 fill-white" />
+                        )}
+                        <span>{isCreatingLobby ? 'CREATING ROOM...' : 'CREATE DERBY ROOM'}</span>
+                      </button>
+
+                      {/* Equipped Car Pill */}
+                      <div className="flex items-center gap-2 px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs">
+                        <div className="w-3 h-3 rounded-full border border-white/20" style={{ backgroundColor: selectedVehicleDef.color }} />
+                        <span className="text-gray-300 font-bold">{selectedVehicleDef.name}</span>
+                        <button
+                          onClick={() => {
+                            handlePlaySound('click');
+                            setActiveView('GARAGE');
+                          }}
+                          className="text-amber-400 hover:underline text-[11px] font-bold ml-1 cursor-pointer"
+                        >
+                          Change
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
+              </GlassCard>
 
-                <button
-                  onClick={() => {
-                    handlePlaySound('click');
-                    setActiveView('GARAGE');
-                  }}
-                  className="px-3 py-1.5 bg-white/10 hover:bg-white/20 border border-white/10 text-xs font-bold text-amber-400 rounded-xl flex items-center gap-1.5 cursor-pointer"
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
-                  <span>CHANGE CAR</span>
-                </button>
-              </div>
-
-              <button
-                disabled={isCreatingLobby}
-                onClick={() => {
-                  handlePlaySound('click');
-                  createLobby(userId, nickname, currentArena);
-                }}
-                className={`w-full py-4 bg-gradient-to-r from-amber-500 via-red-600 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-white font-black text-base uppercase tracking-wider rounded-2xl shadow-xl flex items-center justify-center gap-2 transition-all ${
-                  isCreatingLobby ? 'opacity-70 cursor-wait' : 'cursor-pointer hover:scale-[1.02]'
-                }`}
-              >
-                {isCreatingLobby ? (
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <Play className="w-5 h-5 fill-white" />
-                )}
-                <span>{isCreatingLobby ? 'CREATING ROOM...' : 'CREATE MATCH ROOM'}</span>
-              </button>
-
-              {/* Direct Room Code Join */}
-              <div className="p-4 bg-neutral-900/90 border border-white/10 rounded-2xl space-y-2 text-left">
-                <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">JOIN BY ROOM CODE / LINK</div>
-                <div className="flex gap-2">
+              {/* Direct Code Join Bar */}
+              <div className="p-4 bg-white/5 border border-white/10 rounded-2xl flex flex-col sm:flex-row gap-3 items-center justify-between">
+                <div className="text-left">
+                  <div className="text-xs font-bold text-gray-300 uppercase tracking-wider">HAVE A MATCH CODE?</div>
+                  <p className="text-[11px] text-gray-400">Enter a room ID to jump directly into your friend&apos;s derby.</p>
+                </div>
+                <div className="flex gap-2 w-full sm:w-auto">
                   <input
                     type="text"
-                    placeholder="Paste Game ID or Code..."
+                    placeholder="Paste Room ID..."
                     value={directCode}
                     onChange={(e) => setDirectCode(e.target.value)}
-                    className="flex-1 px-3 py-2 bg-neutral-950 border border-white/10 rounded-xl text-white text-xs font-mono focus:outline-none focus:border-cyan-500"
+                    className="flex-1 sm:w-56 px-3.5 py-2 bg-black/80 border border-white/15 rounded-xl text-white text-xs font-mono focus:outline-none focus:border-amber-500"
                   />
                   <button
                     disabled={!directCode.trim()}
@@ -847,105 +1084,335 @@ export function DemolitionDerbyGameHub() {
                         joinLobby(directCode.trim(), userId, nickname);
                       }
                     }}
-                    className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl cursor-pointer"
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-black font-extrabold text-xs uppercase rounded-xl transition-colors cursor-pointer"
                   >
                     JOIN
                   </button>
                 </div>
               </div>
 
-              {/* Available Lobbies */}
-              <div className="space-y-2 pt-2 text-left">
+              {/* Open Public Lobbies */}
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">AVAILABLE LOBBIES</div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Globe className="w-5 h-5 text-amber-400" />
+                    Open Derby Rooms ({derbyLobbies.length})
+                  </h3>
                   <button
                     onClick={fetchLobbies}
-                    className="text-[10px] text-cyan-400 hover:underline font-bold"
+                    className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer text-xs flex items-center gap-1"
+                    title="Refresh Lobbies"
                   >
-                    REFRESH
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Refresh</span>
                   </button>
                 </div>
-                {availableLobbies.length === 0 ? (
-                  <div className="p-4 bg-white/5 rounded-xl border border-white/10 text-center text-xs text-gray-400">
-                    No active derby rooms found. Create one!
+
+                {derbyLobbies.length === 0 ? (
+                  <div className="text-center py-10 text-gray-500 text-sm space-y-1">
+                    <p>No active derby rooms found.</p>
+                    <p className="text-xs text-gray-600">Create a room and invite online racers!</p>
                   </div>
                 ) : (
-                  availableLobbies.map((l) => (
-                    <div
-                      key={l.id}
-                      className="p-3 bg-neutral-900 border border-white/10 rounded-xl flex items-center justify-between"
-                    >
-                      <div>
-                        <div className="text-sm font-bold text-white">{l.hostName || 'Room'}</div>
-                        <div className="text-[10px] text-gray-400">{l.players?.length || l.playerCount || 1} / {l.maxPlayers || 8} Players</div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          handlePlaySound('click');
-                          joinLobby(l.id, userId, nickname);
-                        }}
-                        className="px-3.5 py-1.5 bg-cyan-500 text-white font-bold text-xs rounded-lg hover:bg-cyan-400 cursor-pointer"
+                  <div className="space-y-2.5">
+                    {derbyLobbies.map((l) => (
+                      <div
+                        key={l.id}
+                        className="flex items-center justify-between p-3.5 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors"
                       >
-                        JOIN
-                      </button>
-                    </div>
-                  ))
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-red-600 flex items-center justify-center font-bold text-white text-xs shrink-0 shadow-sm">
+                            {l.hostName?.[0]?.toUpperCase() || 'D'}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-bold text-sm text-white block leading-tight truncate">
+                              {l.hostName}&apos;s Derby
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {l.playerCount || l.players?.length || 1}/{l.maxPlayers || 8} Drivers · {l.status === 'WAITING' ? 'Waiting in Lobby' : 'Match In Progress'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            handlePlaySound('click');
+                            joinLobby(l.id, userId, nickname);
+                          }}
+                          className="px-4 py-2 bg-gradient-to-r from-amber-500 to-red-600 hover:from-amber-400 hover:to-red-500 text-white text-xs font-black uppercase rounded-xl transition-all shadow-md cursor-pointer shrink-0"
+                        >
+                          Join Derby
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
-          ) : (
-            <div className="bg-neutral-900 border border-white/10 rounded-3xl p-6 space-y-6 text-left shadow-2xl">
-              {/* Lobby Header */}
-              <div className="flex justify-between items-center border-b border-white/10 pb-3">
-                <div>
-                  <div className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">MATCH LOBBY</div>
-                  <h3 className="text-xl font-black text-white">DEMOLITION DERBY</h3>
-                  <div className="text-[10px] text-gray-400 font-mono mt-0.5">ID: {roomState.id}</div>
-                </div>
+
+            {/* Right Column: Online Players to Invite */}
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex flex-col space-y-4 text-left">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <UserPlus className="w-5 h-5 text-amber-400" />
+                  Online Racers ({onlineUsers.length})
+                </h3>
                 <button
-                  onClick={() => {
-                    const url = `${window.location.origin}/dashboard/games/demolition-derby?room=${roomState.id}`;
-                    navigator.clipboard.writeText(url);
-                    setCopiedCode(true);
-                    setTimeout(() => setCopiedCode(false), 2000);
-                  }}
-                  className="px-3 py-1.5 bg-white/5 border border-white/10 hover:bg-white/10 text-xs font-bold text-cyan-400 rounded-lg flex items-center gap-1.5 cursor-pointer"
+                  onClick={fetchOnlineUsers}
+                  className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer text-xs flex items-center gap-1"
+                  title="Refresh online users"
                 >
-                  {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedCode ? 'COPIED LINK' : 'SHARE LINK'}</span>
+                  <RotateCcw className="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              {/* Host-Only Arena Selector Banner */}
-              <div className="p-4 bg-black/50 border border-white/10 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                <div>
-                  <div className="text-[10px] text-amber-400 font-bold uppercase tracking-widest flex items-center gap-1.5">
-                    <Compass className="w-3.5 h-3.5" /> BATTLE ARENA
+              <div className="flex-1 overflow-y-auto max-h-[500px] space-y-2.5 pr-1 custom-scrollbar">
+                {onlineUsers.length === 0 ? (
+                  <div className="text-center py-10 text-gray-500 text-sm space-y-1">
+                    <p>No other players online right now.</p>
+                    <p className="text-xs text-gray-600">Create a room and share your link with friends!</p>
                   </div>
-                  <div className="text-base font-black text-white mt-0.5">{currentLobbyArena.name}</div>
-                  <div className="text-[11px] text-gray-400">{currentLobbyArena.difficultyTag} • 100% Unlocked</div>
-                </div>
-
-                {isHost ? (
-                  <button
-                    onClick={() => setIsHostArenaModalOpen(true)}
-                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md"
-                  >
-                    <Compass className="w-3.5 h-3.5" />
-                    <span>CHANGE ARENA</span>
-                  </button>
                 ) : (
-                  <span className="px-2.5 py-1 bg-white/5 border border-white/10 text-gray-400 text-[10px] font-bold rounded-lg flex items-center gap-1">
-                    <Lock className="w-3 h-3 text-gray-400" /> Selected by Host
+                  onlineUsers.map((u) => {
+                    const isFriend = friendsList.some((f) => f.id === u.id);
+                    const status = getInviteStatus(u.id);
+                    return (
+                      <div key={u.id} className="flex items-center justify-between p-3 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="relative shrink-0">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500 to-red-600 flex items-center justify-center text-xs font-bold text-white overflow-hidden shadow-inner">
+                              {u.avatar ? (
+                                <img src={u.avatar} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                (u.nickname || '?')[0].toUpperCase()
+                              )}
+                            </div>
+                            <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-neutral-900 bg-emerald-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-bold text-sm text-white block leading-tight truncate">{u.nickname}</span>
+                            <span className="text-[10px] text-gray-400">
+                              {isFriend ? 'Friend · Online' : 'Online'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleSendInvite(u.id)}
+                          disabled={!status.canInvite}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                            !status.canInvite
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 cursor-not-allowed'
+                              : 'bg-gradient-to-r from-amber-500 to-red-600 hover:from-amber-400 hover:to-red-500 text-white shadow-md shadow-amber-500/20'
+                          }`}
+                        >
+                          {status.canInvite ? 'Invite' : status.label}
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // IN-LOBBY VIEW (MATCHING MEMORY MATCH)
+    // ==========================================
+    return (
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-6xl w-full mx-auto space-y-6">
+        {lobbyError && (
+          <div className="p-3 bg-red-500/20 border border-red-500/40 rounded-2xl text-red-300 text-xs font-bold flex items-center justify-between shadow-lg">
+            <span>{lobbyError}</span>
+            <button onClick={clearLobbyError} className="text-red-400 hover:text-white font-bold ml-2 cursor-pointer">✕</button>
+          </div>
+        )}
+
+        {/* Subheader Toolbar */}
+        <div className="flex flex-wrap items-center justify-between bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md gap-3">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                handlePlaySound('click');
+                leaveLobby(userId);
+                setActiveView('MENU');
+              }}
+              className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
+              title="Leave Lobby"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div>
+              <h1 className="text-lg sm:text-xl font-black text-white flex items-center gap-2 uppercase tracking-wide">
+                <Flame className="w-5 h-5 text-amber-500" /> Demolition Derby Lobby
+              </h1>
+              <p className="text-gray-400 text-xs font-mono select-text">Room ID: {roomState.id}</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                toggleSound();
+              }}
+              className="p-1.5 sm:p-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white transition-all cursor-pointer shrink-0"
+              title={soundMuted ? 'Unmute Sound' : 'Mute Sound'}
+            >
+              {soundMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
+            </button>
+
+            <button
+              onClick={toggleChat}
+              className="px-3 py-1.5 bg-white/5 border border-white/10 hover:border-amber-500/50 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors hover:bg-white/10 cursor-pointer relative"
+              title="Lobby Chat"
+            >
+              <MessageSquare className="w-4 h-4 text-amber-400" />
+              <span className="hidden sm:inline">Chat</span>
+              {unreadChatCount > 0 && (
+                <span className="px-1.5 py-0.2 text-[9px] font-black bg-rose-500 text-white rounded-full animate-bounce">
+                  {unreadChatCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                handlePlaySound('click');
+                setShowRulesModal(true);
+              }}
+              className="px-3 py-1.5 bg-white/5 border border-white/10 text-gray-300 hover:text-white rounded-full text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors hover:bg-white/10 cursor-pointer"
+            >
+              <BookOpen className="w-4 h-4 text-orange-400" />
+              <span className="hidden sm:inline">Rules</span>
+            </button>
+
+            <button
+              onClick={() => {
+                handlePlaySound('click');
+                leaveLobby(userId);
+              }}
+              className="px-3.5 py-1.5 bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 rounded-full text-xs sm:text-sm font-bold text-red-400 flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Leave</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 3-Column Split Layout (2 Cols Left + 1 Col Right) */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left 2 Cols: Room Code, Match Settings, Players, Start Match */}
+          <div className="lg:col-span-2 space-y-5 text-left">
+            {/* Lobby Code & Copy Buttons Card */}
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 bg-white/5 border border-white/10 rounded-2xl p-3.5">
+              <div className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Room Code</div>
+              <code className="text-sm text-amber-400 font-mono flex-1 select-all font-bold tracking-wider">{roomState.id}</code>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    handlePlaySound('click');
+                    const ok = await copyTextToClipboard(roomState.id);
+                    if (ok) {
+                      setCopiedRoomCode(true);
+                      setTimeout(() => setCopiedRoomCode(false), 2000);
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors cursor-pointer flex items-center gap-1.5 text-xs text-gray-300 border border-white/10 font-bold"
+                  title="Copy Room Code"
+                >
+                  {copiedRoomCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-gray-400" />}
+                  <span>{copiedRoomCode ? 'Code Copied!' : 'Copy Code'}</span>
+                </button>
+                <button
+                  onClick={async () => {
+                    handlePlaySound('click');
+                    const url = `${window.location.origin}/dashboard/games/demolition-derby?room=${roomState.id}`;
+                    const ok = await copyTextToClipboard(url);
+                    if (ok) {
+                      setCopiedLink(true);
+                      setTimeout(() => setCopiedLink(false), 2000);
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                  title="Copy Direct Invite Link"
+                >
+                  {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-amber-400" />}
+                  <span>{copiedLink ? 'Link Copied!' : 'Share Link'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Asset loading progress bar for local player */}
+            {!assetsReady && (
+              <div className="p-3.5 bg-amber-500/10 border border-amber-500/20 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-amber-300 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading 3D Vehicle Models & Derby Arena Assets...
+                  </span>
+                  <span className="text-amber-400 font-mono font-bold">{assetProgress}%</span>
+                </div>
+                <div className="h-2 bg-black/40 rounded-full overflow-hidden border border-white/10 p-0.5">
+                  <div className="h-full bg-gradient-to-r from-amber-500 to-red-500 rounded-full transition-all duration-300" style={{ width: `${assetProgress}%` }} />
+                </div>
+                {assetError && (
+                  <div className="flex items-center justify-between text-[11px] text-red-400 pt-1">
+                    <span>⚠ Failed to load: {failedAssets.join(', ')}</span>
+                    <button onClick={retryAssets} className="px-2.5 py-1 bg-red-500/20 hover:bg-red-500/40 text-red-300 rounded font-bold cursor-pointer">RETRY</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Match Settings Card: Arena & Car */}
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-4 sm:p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-bold text-white flex items-center gap-2">
+                  <SlidersHorizontal className="w-4 h-4 text-amber-400" /> Match Configuration
+                </div>
+                {!isHost && (
+                  <span className="text-[11px] text-gray-400 font-medium flex items-center gap-1">
+                    <Lock className="w-3 h-3" /> Host controls arena
                   </span>
                 )}
               </div>
 
-              {/* Players in Lobby with Selected Vehicle Badges */}
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                    PLAYERS IN LOBBY ({roomState.players.length} / {roomState.settings?.maxPlayers || 8})
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Arena Info / Selector */}
+                <div className="p-3.5 bg-black/40 border border-white/10 rounded-xl flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                      <Compass className="w-3 h-3" /> Arena
+                    </div>
+                    <div className="text-sm font-black text-white truncate">{currentLobbyArena.name}</div>
+                    <div className="text-[10px] text-gray-400">{currentLobbyArena.difficultyTag}</div>
+                  </div>
+
+                  {isHost ? (
+                    <button
+                      onClick={() => setIsHostArenaModalOpen(true)}
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-lg transition-colors cursor-pointer shrink-0"
+                    >
+                      Change
+                    </button>
+                  ) : (
+                    <span className="text-[10px] text-gray-500 font-semibold shrink-0">Host Pick</span>
+                  )}
+                </div>
+
+                {/* Selected Vehicle Quick Selector */}
+                <div className="p-3.5 bg-black/40 border border-white/10 rounded-xl flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                      <Wrench className="w-3 h-3" /> Your Vehicle
+                    </div>
+                    <div className="text-sm font-black text-white flex items-center gap-1.5 truncate">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: selectedVehicleDef.color }} />
+                      <span className="truncate">{selectedVehicleDef.name}</span>
+                    </div>
+                    <div className="text-[10px] text-gray-400">Equipped for battle</div>
                   </div>
 
                   <button
@@ -954,165 +1421,265 @@ export function DemolitionDerbyGameHub() {
                       setPreviewCarId(selectedVehicle);
                       setIsLobbyGarageModalOpen(true);
                     }}
-                    className="text-[11px] font-bold text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    className="px-3 py-1.5 bg-white/10 hover:bg-white/20 border border-white/10 text-cyan-400 text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0"
                   >
-                    <SlidersHorizontal className="w-3 h-3" />
-                    <span>GARAGE (SELECT CAR)</span>
+                    Garage
                   </button>
                 </div>
+              </div>
+            </div>
 
-                {roomState.players.map((p) => {
-                  const pVehicleKey = (p.selectedCarId || (p as any).vehicleId || 'road_crusher') as VehicleId;
-                  const pCarDef = VEHICLES[pVehicleKey] || VEHICLES.road_crusher;
+            {/* Players List Card */}
+            <div className="space-y-2.5">
+              <div className="text-xs text-gray-400 uppercase tracking-wider font-semibold flex items-center justify-between">
+                <span>Players ({players.length} / {roomState.settings?.maxPlayers || 8})</span>
+                <span className="text-[11px] text-amber-400/80">Min. 2 Players required</span>
+              </div>
 
-                  return (
-                    <div
-                      key={p.userId}
-                      className="p-3 bg-white/5 border border-white/10 rounded-xl flex items-center justify-between text-sm font-bold text-white"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-3 h-3 rounded-full border border-white/30" style={{ backgroundColor: pCarDef.color }} />
-                        <span>{p.nickname}</span>
+              {players.map((p: any) => {
+                const pVehicleKey = (p.selectedCarId || p.vehicleId || 'road_crusher') as VehicleId;
+                const pCarDef = VEHICLES[pVehicleKey] || VEHICLES.road_crusher;
 
-                        {p.role === 'HOST' && (
-                          <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 text-[9px] rounded font-bold">
-                            HOST
-                          </span>
-                        )}
+                return (
+                  <div
+                    key={p.userId}
+                    className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl p-3.5"
+                  >
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-500 to-red-600 flex items-center justify-center text-xs font-bold text-white overflow-hidden shadow-inner shrink-0">
+                      {p.avatar ? (
+                        <img src={p.avatar} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        (p.nickname || '?')[0].toUpperCase()
+                      )}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-white text-sm flex items-center gap-1.5 truncate">
+                        <span className="truncate">{p.nickname}</span>
+                        {p.role === 'HOST' && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}
                         {p.userId === userId && (
-                          <span className="px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 text-[9px] rounded font-bold">
+                          <span className="px-1.5 py-0.2 bg-cyan-500/20 text-cyan-400 text-[9px] rounded font-extrabold shrink-0">
                             YOU
                           </span>
                         )}
-
-                        <span className="text-[11px] text-amber-300 font-extrabold bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
-                          {pCarDef.name}
-                        </span>
                       </div>
+                      <div className="text-xs text-gray-400 flex items-center gap-1.5 mt-0.5">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: pCarDef.color }} />
+                        <span className="text-amber-300 font-semibold">{pCarDef.name}</span>
+                      </div>
+                    </div>
 
-                      <span className={p.isReady ? 'text-emerald-400 text-xs font-extrabold' : 'text-amber-400 text-xs font-bold'}>
-                        {p.isReady ? 'READY' : 'NOT READY'}
+                    {/* Asset Model Ready Badge & Game Ready Status */}
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-bold uppercase tracking-wide px-2.5 py-0.5 rounded-full border ${
+                        isPlayerAssetReady(p)
+                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                          : 'bg-amber-500/20 text-amber-300 border-amber-500/30 animate-pulse'
+                      }`}>
+                        {isPlayerAssetReady(p) ? '✓ 3D Ready' : '⏳ Loading 3D...'}
                       </span>
+
+                      <div className={`text-xs font-extrabold px-3 py-1 rounded-full shrink-0 ${
+                        p.isReady || p.role === 'HOST'
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-white/5 text-amber-400 border border-amber-500/20'
+                      }`}>
+                        {p.role === 'HOST' ? 'Host' : p.isReady ? 'Ready' : 'Waiting'}
+                      </div>
+                    </div>
+
+                    {isHost && p.userId !== userId && (
+                      <button
+                        onClick={() => kickPlayer(roomState.id, userId, p.userId)}
+                        className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors cursor-pointer shrink-0"
+                        title="Kick Player"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 pt-2">
+              {isHost ? (
+                <button
+                  disabled={!canStart}
+                  onClick={() => {
+                    handlePlaySound('click');
+                    startMatch(roomState.id, roomState.hostId || userId);
+                  }}
+                  title={!allPlayersAssetsReady && waitingForAssetsStr ? `Waiting for ${waitingForAssetsStr} to finish loading 3D vehicle assets` : undefined}
+                  className={`flex-1 px-5 py-3.5 font-black text-sm uppercase rounded-2xl shadow-xl transition-all flex items-center justify-center gap-2 ${
+                    canStart
+                      ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-white shadow-emerald-500/25 hover:scale-[1.02] active:scale-95 cursor-pointer'
+                      : 'bg-white/5 border border-white/10 text-gray-500 cursor-not-allowed opacity-75'
+                  }`}
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>
+                    {!hasMinPlayers
+                      ? `WAITING FOR RACERS (${players.length} / 2 MIN)`
+                      : !allPlayersReady
+                      ? 'WAITING FOR ALL TO BE READY'
+                      : !allPlayersAssetsReady
+                      ? 'WAITING FOR 3D VEHICLE ASSETS...'
+                      : 'START DERBY MATCH'}
+                  </span>
+                </button>
+              ) : (
+                (() => {
+                  const localPlayer = players.find((p) => p.userId === userId);
+                  const isReady = Boolean(localPlayer?.isReady);
+                  return (
+                    <button
+                      onClick={() => {
+                        handlePlaySound('click');
+                        toggleReady(roomState.id, userId, !isReady);
+                      }}
+                      className={`flex-1 px-5 py-3.5 font-black text-sm uppercase rounded-2xl shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                        isReady
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-gradient-to-r from-amber-500 via-red-600 to-amber-600 hover:from-amber-400 text-white shadow-amber-500/25'
+                      }`}
+                    >
+                      <Shield className="w-4 h-4" />
+                      <span>{isReady ? 'CANCEL READY' : 'READY UP'}</span>
+                    </button>
+                  );
+                })()
+              )}
+
+              <button
+                onClick={() => {
+                  handlePlaySound('click');
+                  leaveLobby(userId);
+                }}
+                className="px-5 py-3.5 bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs uppercase rounded-2xl transition-colors border border-white/10 cursor-pointer"
+              >
+                Leave
+              </button>
+            </div>
+          </div>
+
+          {/* Right Column: Invite Online Players Directly */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex flex-col space-y-4 text-left">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-amber-400" />
+                Invite Racers
+              </h3>
+              <button
+                onClick={fetchOnlineUsers}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer text-xs flex items-center gap-1"
+                title="Refresh online users"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto max-h-[480px] space-y-2.5 pr-1 custom-scrollbar">
+              {onlineUsers.filter((u) => !players.some((p) => p.userId === u.id)).length === 0 ? (
+                <div className="text-center py-8 text-gray-500 text-xs">
+                  No other racers available to invite
+                </div>
+              ) : (
+                onlineUsers
+                  .filter((u) => !players.some((p) => p.userId === u.id))
+                  .map((u) => {
+                    const isFriend = friendsList.some((f) => f.id === u.id);
+                    const status = getInviteStatus(u.id);
+                    return (
+                      <div key={u.id} className="flex items-center justify-between p-2.5 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="relative shrink-0">
+                            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-500 to-red-600 flex items-center justify-center text-xs font-bold text-white overflow-hidden">
+                              {u.avatar ? (
+                                <img src={u.avatar} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                (u.nickname || '?')[0].toUpperCase()
+                              )}
+                            </div>
+                            <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-neutral-900 bg-emerald-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-bold text-xs text-white block leading-tight truncate">{u.nickname}</span>
+                            <span className="text-[9px] text-gray-400">
+                              {isFriend ? 'Friend' : 'Online'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleSendInvite(u.id)}
+                          disabled={!status.canInvite}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer shrink-0 ${
+                            !status.canInvite
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 cursor-not-allowed'
+                              : 'bg-gradient-to-r from-amber-500 to-red-600 hover:from-amber-400 hover:to-red-500 text-white shadow-sm'
+                          }`}
+                        >
+                          {status.canInvite ? 'Invite' : status.label}
+                        </button>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Host Arena Selector Modal */}
+        {isHostArenaModalOpen && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="bg-neutral-900 border border-white/20 rounded-3xl p-6 max-w-2xl w-full max-h-[85vh] overflow-y-auto custom-scrollbar space-y-4 text-left shadow-2xl">
+              <div className="flex justify-between items-center border-b border-white/10 pb-3">
+                <div>
+                  <h3 className="text-xl font-black text-white uppercase">SELECT MATCH ARENA</h3>
+                  <p className="text-xs text-gray-400">All 7 arenas are available for host selection</p>
+                </div>
+                <button
+                  onClick={() => setIsHostArenaModalOpen(false)}
+                  className="text-gray-400 hover:text-white font-bold text-lg cursor-pointer px-2"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {Object.values(ARENAS).map((a) => {
+                  const isSelected = (roomState?.settings?.arenaId || currentArena) === a.id;
+                  return (
+                    <div
+                      key={a.id}
+                      onClick={() => {
+                        handlePlaySound('click');
+                        selectArena(a.id);
+                        if (roomState) {
+                          sendSelectArena(roomState.id, roomState.hostId || userId, a.id);
+                        }
+                        setIsHostArenaModalOpen(false);
+                      }}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-amber-500/20 border-amber-500 shadow-md shadow-amber-500/20'
+                          : 'bg-black/50 border-white/10 hover:border-white/30 hover:bg-white/5'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start mb-1">
+                        <div className="text-sm font-black text-white">{a.name}</div>
+                        <span className="text-[10px] font-bold text-amber-400">{a.difficultyTag}</span>
+                      </div>
+                      <p className="text-[11px] text-gray-400 line-clamp-2">{a.description}</p>
                     </div>
                   );
                 })}
               </div>
-
-              {/* Lobby Action Controls */}
-              <div className="pt-2 space-y-2">
-                {isHost ? (
-                  <div className="space-y-1">
-                    <button
-                      disabled={!canStart}
-                      onClick={() => {
-                        handlePlaySound('click');
-                        startMatch(roomState.id, roomState.hostId || userId);
-                      }}
-                      className={`w-full py-3.5 font-black text-sm uppercase rounded-xl shadow-lg transition-all ${
-                        canStart
-                          ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-white cursor-pointer hover:scale-[1.02]'
-                          : 'bg-neutral-800 border border-white/10 text-gray-400 cursor-not-allowed opacity-75'
-                      }`}
-                    >
-                      {!hasMinPlayers
-                        ? `WAITING FOR PLAYERS (${roomState.players.length} / 2 MIN)`
-                        : !allPlayersReady
-                        ? 'WAITING FOR PLAYERS TO BE READY'
-                        : 'START MATCH'}
-                    </button>
-                    {!hasMinPlayers && (
-                      <p className="text-[11px] text-amber-400/90 text-center font-semibold">
-                        At least 2 players are required to start.
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  (() => {
-                    const localPlayer = roomState.players.find((p) => p.userId === userId);
-                    return (
-                      <button
-                        onClick={() => {
-                          toggleReady(roomState.id, userId, !localPlayer?.isReady);
-                        }}
-                        className={`w-full py-3.5 font-black text-sm uppercase rounded-xl shadow-lg cursor-pointer transition-all ${
-                          localPlayer?.isReady
-                            ? 'bg-amber-600 hover:bg-amber-500 text-white'
-                            : 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 text-white'
-                        }`}
-                      >
-                        {localPlayer?.isReady ? 'CANCEL READY' : 'READY UP'}
-                      </button>
-                    );
-                  })()
-                )}
-
-                <button
-                  onClick={() => leaveLobby(userId)}
-                  className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white font-bold text-xs rounded-xl cursor-pointer"
-                >
-                  LEAVE LOBBY
-                </button>
-              </div>
             </div>
-          )}
-
-          {/* Host Arena Selection Modal */}
-          {isHostArenaModalOpen && (
-            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-              <div className="bg-neutral-900 border border-white/20 rounded-3xl p-6 max-w-2xl w-full max-h-[85vh] overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden space-y-4 text-left shadow-2xl">
-                <div className="flex justify-between items-center border-b border-white/10 pb-3">
-                  <div>
-                    <h3 className="text-xl font-black text-white uppercase">SELECT MATCH ARENA</h3>
-                    <p className="text-xs text-gray-400">All 7 arenas are 100% unlocked for host selection</p>
-                  </div>
-                  <button
-                    onClick={() => setIsHostArenaModalOpen(false)}
-                    className="text-gray-400 hover:text-white font-bold text-lg cursor-pointer px-2"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {Object.values(ARENAS).map((a) => {
-                    const isSelected = (roomState?.settings?.arenaId || currentArena) === a.id;
-
-                    return (
-                      <div
-                        key={a.id}
-                        onClick={() => {
-                          handlePlaySound('click');
-                          selectArena(a.id);
-                          if (roomState) {
-                            sendSelectArena(roomState.id, userId, a.id);
-                          }
-                          setIsHostArenaModalOpen(false);
-                        }}
-                        className={`p-3.5 rounded-xl border transition-all cursor-pointer text-left ${
-                          isSelected
-                            ? 'bg-amber-500/20 border-amber-500 shadow-md ring-1 ring-amber-500'
-                            : 'bg-black/40 border-white/10 hover:border-white/30'
-                        }`}
-                      >
-                        <div className="flex justify-between items-start mb-1">
-                          <div className="text-[10px] text-amber-400 font-extrabold uppercase tracking-wider">
-                            ARENA {a.index} • {a.difficultyTag}
-                          </div>
-                          {isSelected && (
-                            <span className="px-1.5 py-0.5 bg-amber-500 text-black text-[9px] font-black rounded">
-                              SELECTED
-                            </span>
-                          )}
-                        </div>
-                        <h4 className="text-sm font-black text-white">{a.name}</h4>
-                        <p className="text-[11px] text-gray-400 mt-1 line-clamp-2">{a.description}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
+          </div>
+        )}
 
           {/* In-Lobby Garage & Vehicle Selection Modal */}
           {isLobbyGarageModalOpen && (
@@ -1313,8 +1880,7 @@ export function DemolitionDerbyGameHub() {
             </div>
           )}
         </div>
-      </div>
-    );
+      );
   };
 
   // ── 5. COMPACT GAMEPLAY HUD OVERLAY ────────────────────────
@@ -1550,9 +2116,21 @@ export function DemolitionDerbyGameHub() {
     );
   };
 
+  if (!isClient) {
+    return (
+      <div className="fixed inset-0 w-screen h-screen bg-black flex items-center justify-center text-white">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Loading Derby...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="relative w-full h-screen bg-neutral-950 flex flex-col font-sans select-none overflow-hidden text-white">
-      {renderNavbar()}
+    <div className="relative w-full h-screen bg-neutral-950 flex flex-col font-sans overflow-hidden text-white">
+      {!roomState && renderNavbar()}
+      {renderRulesModal()}
 
       <div className="flex-1 flex flex-col relative overflow-hidden">
         {activeView === 'MENU' && renderMenu()}
@@ -1586,6 +2164,15 @@ export function DemolitionDerbyGameHub() {
           </div>
         )}
       </div>
+
+      {/* In-Game / In-Lobby Multiplayer Chat Drawer */}
+      {roomState && (
+        <GameChatDrawer
+          gameId={roomState.id}
+          currentUser={{ id: userId, nickname, avatar: useUserStore.getState().avatar }}
+          title={roomState.status === 'WAITING' ? 'Lobby Chat' : 'Derby Match Chat'}
+        />
+      )}
     </div>
   );
 }
