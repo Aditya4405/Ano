@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:server": "node server/index.js",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -29,6 +30,7 @@
     "@tensorflow/tfjs": "^4.22.0",
     "@vercel/analytics": "^2.0.1",
     "axios": "^1.18.1",
+    "cannon-es": "^0.20.0",
     "class-variance-authority": "^0.7.1",
     "cloudinary": "^2.10.0",
     "clsx": "^2.1.1",
@@ -59,6 +61,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "^0.185.4",
     "@types/uuid": "^10.0.0",
     "dotenv": "^17.4.2",
     "eslint": "^9",

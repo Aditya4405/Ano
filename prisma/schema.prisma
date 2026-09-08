@@ -318,6 +318,7 @@ enum GameType {
   PAPER_FALL
   ARROW_MAZE
   ULTIMATE_TIC_TAC_TOE
+  DEMOLITION_DERBY
 }
 
 enum GameStatus {
