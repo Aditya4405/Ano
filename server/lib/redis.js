@@ -1,4 +1,9 @@
-const Redis = require('ioredis');
+let Redis = null;
+try {
+  Redis = require('ioredis');
+} catch (e) {
+  // ioredis not installed in this environment; fallback to memory
+}
 
 let primaryClient = null;
 let pubClient = null;
@@ -79,6 +84,7 @@ function setupClient(client, name = 'Primary') {
  * Get or create the singleton primary Redis client
  */
 function getRedisClient() {
+  if (!Redis) return null;
   if (!primaryClient) {
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
     try {
@@ -99,6 +105,7 @@ function getRedisClient() {
  * Create a new standalone Redis client instance (e.g. for Pub/Sub or Socket.IO adapter)
  */
 function createRedisClient(name = 'Worker') {
+  if (!Redis) return null;
   const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
   try {
     const client = new Redis(redisUrl, getRedisOptions());
