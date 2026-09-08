@@ -1423,8 +1423,6 @@ export function DemolitionDerbyCanvas({
       {floatingHealthBars.map((bar) => {
         const hpPercent = Math.max(0, Math.min(100, (bar.hp / bar.maxHp) * 100));
         const barColor = hpPercent > 60 ? 'bg-emerald-500' : hpPercent > 30 ? 'bg-amber-500' : 'bg-red-600 animate-pulse';
-        const statusText = hpPercent > 60 ? 'HEALTHY' : hpPercent > 30 ? 'DAMAGED' : hpPercent > 0 ? 'CRITICAL' : 'DESTROYED';
-        const statusColor = hpPercent > 60 ? 'text-emerald-400' : hpPercent > 30 ? 'text-amber-400' : 'text-red-400 font-extrabold animate-pulse';
 
         return (
           <div
@@ -1435,44 +1433,36 @@ export function DemolitionDerbyCanvas({
             }}
           >
             <div
-              className={`px-3 py-1.5 rounded-xl backdrop-blur-md shadow-2xl select-none text-center transition-all ${
+              className={`w-[116px] px-2.5 py-1.5 rounded-xl backdrop-blur-md shadow-2xl select-none text-center transition-all ${
                 bar.isPlayer
-                  ? 'bg-neutral-950/95 border-2 border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.35)] min-w-[125px]'
-                  : 'bg-neutral-950/90 border border-white/20 min-w-[110px]'
+                  ? 'bg-neutral-950/95 border border-amber-400/60 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+                  : 'bg-neutral-950/90 border border-white/20'
               }`}
             >
               {/* Header: Name & Car Number & YOU badge */}
-              <div className="flex justify-between items-center text-[10px] font-black tracking-wider mb-0.5 gap-2">
-                <div className="flex items-center gap-1">
+              <div className="flex justify-between items-center text-[10px] font-black tracking-wider mb-1 gap-1.5">
+                <div className="flex items-center gap-1 min-w-0">
                   {bar.isPlayer && (
-                    <span className="px-1 py-0.2 bg-amber-500 text-black text-[8px] font-black rounded">
+                    <span className="px-1 py-0.2 bg-amber-500 text-black text-[7.5px] font-black rounded shrink-0 leading-none">
                       YOU
                     </span>
                   )}
-                  <span className={`uppercase truncate max-w-[85px] drop-shadow-sm ${bar.isPlayer ? 'text-amber-300 font-extrabold' : 'text-white'}`}>
+                  <span className={`uppercase truncate max-w-[65px] drop-shadow-sm ${bar.isPlayer ? 'text-amber-300 font-extrabold' : 'text-white'}`}>
                     {bar.name} {bar.carNumber ? `#${bar.carNumber}` : ''}
                   </span>
                 </div>
-                <span className="text-gray-300 font-mono text-[9px] font-bold tabular-nums">
+                <span className="text-gray-300 font-mono text-[9px] font-bold tabular-nums shrink-0">
                   {bar.hp}/{bar.maxHp}
                 </span>
               </div>
 
               {/* Health Bar Progress Track */}
-              <div className="w-full bg-neutral-900 h-2 rounded-full overflow-hidden border border-black/80 p-0.5">
+              <div className="w-full bg-neutral-900 h-1.5 rounded-full overflow-hidden border border-black/80 p-0.5">
                 <div
                   className={`h-full rounded-full transition-all duration-100 ${barColor}`}
                   style={{ width: `${hpPercent}%` }}
                 />
               </div>
-
-              {/* Sub-status text for player nameplate */}
-              {bar.isPlayer && (
-                <div className="flex justify-between items-center text-[8px] font-bold tracking-widest uppercase mt-0.5 px-0.5">
-                  <span className="text-gray-400">STATUS</span>
-                  <span className={statusColor}>{statusText}</span>
-                </div>
-              )}
             </div>
           </div>
         );
