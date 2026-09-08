@@ -93,7 +93,12 @@ type ActiveView =
 
 export function DemolitionDerbyGameHub() {
   const searchParams = useSearchParams();
-  const roomCodeParam = searchParams?.get('room');
+  const roomCodeParam =
+    searchParams?.get('gameId') ||
+    searchParams?.get('room') ||
+    searchParams?.get('roomId') ||
+    searchParams?.get('code') ||
+    null;
 
   const userStoreId = useUserStore((s) => s.id);
   const userStoreNickname = useUserStore((s) => s.nickname);
@@ -257,6 +262,8 @@ export function DemolitionDerbyGameHub() {
     preloadAllDerbyGLTFModels();
   }, []);
 
+  const [hasReturnedToLobby, setHasReturnedToLobby] = useState(false);
+
   // Initialize sockets
   useEffect(() => {
     if (userId) {
@@ -265,35 +272,37 @@ export function DemolitionDerbyGameHub() {
     }
   }, [userId, initLobbySockets]);
 
-  // Handle URL Room Parameter
+  // Handle URL Room Parameter (Direct Invite Link / Notification Click)
   useEffect(() => {
     if (roomCodeParam && userId && nickname && !roomState) {
+      initLobbySockets(userId);
       setActiveView('MULTIPLAYER_LOBBY');
       joinLobby(roomCodeParam, userId, nickname);
     }
-  }, [roomCodeParam, userId, nickname, roomState, joinLobby]);
+  }, [roomCodeParam, userId, nickname, roomState, initLobbySockets, joinLobby]);
 
   // Room State Sync — transitions view based on authoritative server status
   useEffect(() => {
     if (roomState) {
       if (roomState.status === 'PLAYING' || roomState.status === 'COUNTDOWN') {
+        setHasReturnedToLobby(false);
         if (activeView !== 'GAMEPLAY') {
           const serverArenaId = roomState.settings?.arenaId as ArenaId | undefined;
           if (serverArenaId) frozenArenaRef.current = serverArenaId;
           setActiveView('GAMEPLAY');
         }
       } else if (roomState.status === 'FINISHED') {
-        if (activeView !== 'RESULTS') {
+        if (!hasReturnedToLobby && activeView !== 'RESULTS') {
           setActiveView('RESULTS');
         }
       } else if (roomState.status === 'LOBBY' || (roomState.status as string) === 'WAITING') {
-        // If currently on RESULTS, stay on RESULTS until user clicks return
-        if (activeView !== 'MULTIPLAYER_LOBBY' && activeView !== 'RESULTS' && activeView !== 'GARAGE' && activeView !== 'ARENA_SELECT') {
+        setHasReturnedToLobby(false);
+        if (activeView !== 'MULTIPLAYER_LOBBY' && activeView !== 'GARAGE' && activeView !== 'ARENA_SELECT') {
           setActiveView('MULTIPLAYER_LOBBY');
         }
       }
     }
-  }, [roomState, activeView]);
+  }, [roomState, activeView, hasReturnedToLobby]);
 
   const handlePlaySound = (type: string) => {
     if (soundMuted) return;
@@ -1331,7 +1340,7 @@ export function DemolitionDerbyGameHub() {
                 <button
                   onClick={async () => {
                     handlePlaySound('click');
-                    const url = `${window.location.origin}/dashboard/games/demolition-derby?room=${roomState.id}`;
+                    const url = `${window.location.origin}/dashboard/games/demolition-derby?gameId=${roomState.id}`;
                     const ok = await copyTextToClipboard(url);
                     if (ok) {
                       setCopiedLink(true);
@@ -1984,7 +1993,12 @@ export function DemolitionDerbyGameHub() {
       newArenaUnlocked: null,
     } : null);
 
-    if (!effectiveRes) return null;
+    if (!effectiveRes) {
+      if (roomState) {
+        return renderMultiplayerLobby();
+      }
+      return renderMenu();
+    }
 
     const winner = mpResults?.find((r) => r.rank === 1);
     const winnerName = winner ? (winner.nickname || winner.name || 'SURVIVOR') : (effectiveRes.isWin ? nickname : 'OPPONENT');
@@ -2068,24 +2082,29 @@ export function DemolitionDerbyGameHub() {
             <button
               onClick={() => {
                 handlePlaySound('click');
+                setHasReturnedToLobby(true);
                 setLastMatchResult(null);
                 setPlayerHp(100);
                 setCurrentScore(0);
                 setGameSessionKey((k) => k + 1);
                 if (roomState) {
                   sendReturnToLobby(roomState.id, userId);
+                  setActiveView('MULTIPLAYER_LOBBY');
+                } else {
+                  setActiveView('MENU');
                 }
-                setActiveView('MULTIPLAYER_LOBBY');
               }}
               className="w-full py-3.5 bg-gradient-to-r from-amber-500 to-red-600 hover:from-amber-400 hover:to-red-500 text-white font-black text-sm uppercase rounded-xl shadow-lg cursor-pointer transition-all hover:scale-[1.02]"
             >
-              RETURN TO DERBY LOBBY
+              {roomState ? 'RETURN TO DERBY LOBBY' : 'RETURN TO MENU'}
             </button>
 
             <button
               onClick={() => {
                 handlePlaySound('click');
-                leaveLobby(userId);
+                setHasReturnedToLobby(true);
+                setLastMatchResult(null);
+                if (roomState) leaveLobby(userId);
                 setActiveView('MENU');
               }}
               className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white font-bold text-xs uppercase rounded-xl cursor-pointer transition-all"
