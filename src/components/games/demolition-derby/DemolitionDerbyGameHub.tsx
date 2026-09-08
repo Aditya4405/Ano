@@ -145,6 +145,7 @@ export function DemolitionDerbyGameHub() {
     sendSelectCar,
     sendSelectArena,
     sendTransformUpdate,
+    sendReturnToLobby,
     kickPlayer,
     invitePlayer,
     reportAssetsReady,
@@ -281,13 +282,14 @@ export function DemolitionDerbyGameHub() {
           if (serverArenaId) frozenArenaRef.current = serverArenaId;
           setActiveView('GAMEPLAY');
         }
-      } else if (roomState.status === 'LOBBY' || (roomState.status as string) === 'WAITING') {
-        if (activeView !== 'MULTIPLAYER_LOBBY') {
-          setActiveView('MULTIPLAYER_LOBBY');
-        }
       } else if (roomState.status === 'FINISHED') {
         if (activeView !== 'RESULTS') {
           setActiveView('RESULTS');
+        }
+      } else if (roomState.status === 'LOBBY' || (roomState.status as string) === 'WAITING') {
+        // If currently on RESULTS, stay on RESULTS until user clicks return
+        if (activeView !== 'MULTIPLAYER_LOBBY' && activeView !== 'RESULTS' && activeView !== 'GARAGE' && activeView !== 'ARENA_SELECT') {
+          setActiveView('MULTIPLAYER_LOBBY');
         }
       }
     }
@@ -1887,27 +1889,8 @@ export function DemolitionDerbyGameHub() {
   const renderGameplayHud = () => (
     <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-between p-3 md:p-4">
       <div className="flex justify-between items-start gap-3 pt-2">
-        {/* Top-Left: Player HP Card */}
-        <div className="bg-neutral-900/90 border border-white/10 backdrop-blur-md rounded-xl p-2.5 space-y-1 w-44 md:w-52 shadow-xl pointer-events-auto">
-          <div className="flex justify-between items-center text-[11px] font-black text-white">
-            <span>MY VEHICLE HP</span>
-            <span className="tabular-nums text-amber-400">{playerHp}%</span>
-          </div>
-
-          <div className="w-full h-2.5 bg-black/60 rounded-full overflow-hidden border border-white/10 p-0.5">
-            <div
-              className={`h-full ${hpInfo.color} rounded-full transition-all duration-300`}
-              style={{ width: `${Math.max(0, playerHp)}%` }}
-            />
-          </div>
-
-          <div className="text-[9px] font-bold text-gray-400 tracking-wider uppercase flex justify-between">
-            <span>STATUS:</span>
-            <span className={hpInfo.text === 'CRITICAL' ? 'text-red-400 animate-pulse font-extrabold' : 'text-gray-300'}>
-              {hpInfo.text}
-            </span>
-          </div>
-        </div>
+        {/* Top-Left: Empty / Clean Spacer */}
+        <div className="w-44 md:w-52" />
 
         {/* Top-Center: Arena Title & Timer */}
         <div className="bg-neutral-900/90 border border-white/10 backdrop-blur-md rounded-xl px-4 py-1.5 text-center shadow-xl">
@@ -2090,8 +2073,7 @@ export function DemolitionDerbyGameHub() {
                 setCurrentScore(0);
                 setGameSessionKey((k) => k + 1);
                 if (roomState) {
-                  const socket = socketService.getSocket();
-                  if (socket) socket.emit('derby_reset_lobby', { gameId: roomState.id });
+                  sendReturnToLobby(roomState.id, userId);
                 }
                 setActiveView('MULTIPLAYER_LOBBY');
               }}
@@ -2115,17 +2097,6 @@ export function DemolitionDerbyGameHub() {
       </div>
     );
   };
-
-  if (!isClient) {
-    return (
-      <div className="fixed inset-0 w-screen h-screen bg-black flex items-center justify-center text-white">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Loading Derby...</span>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="relative w-full h-screen bg-neutral-950 flex flex-col font-sans overflow-hidden text-white">
@@ -2164,7 +2135,6 @@ export function DemolitionDerbyGameHub() {
           </div>
         )}
       </div>
-
       {/* In-Game / In-Lobby Multiplayer Chat Drawer */}
       {roomState && (
         <GameChatDrawer

@@ -818,6 +818,15 @@ class DemolitionDerbyEngine extends BaseGameEngine {
     };
   }
 
+  cleanup() {
+    if (this.countdownTimer) {
+      clearInterval(this.countdownTimer);
+      this.countdownTimer = null;
+    }
+    this.impactCooldowns.clear();
+    this.processedCollisions.clear();
+  }
+
   restoreState(state) {
     this.status = state.status;
     this.seed = state.seed;

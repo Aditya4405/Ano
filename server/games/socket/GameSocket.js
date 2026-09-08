@@ -337,12 +337,18 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
       return socket.emit('game_error', { message: 'Only the host can start the game.' });
     }
 
+    if (lobby.status === 'PLAYING' || lobby.status === 'COUNTDOWN') {
+      console.log(`[GameSocket] Game already in progress or starting for lobby ${gameId}`);
+      return;
+    }
+
     if (lobby.players.size < 2 && lobby.gameType !== 'ARROW_MAZE' && lobby.gameType !== 'PAPER_FALL') {
       return socket.emit('game_error', { message: 'You need at least 2 players to start!' });
     }
 
     const playersList = Array.from(lobby.players.values());
-    const allReady = playersList.every(p => p.role === 'HOST' || p.isReady);
+    const nonHostPlayers = playersList.filter(p => p.role !== 'HOST' && p.userId !== lobby.hostId);
+    const allReady = nonHostPlayers.length === 0 || nonHostPlayers.every(p => p.isReady);
     if (!allReady) {
       return socket.emit('game_error', { message: 'Wait for all players to be ready!' });
     }
@@ -360,6 +366,13 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
     if (!EngineClass) {
       return socket.emit('game_error', { message: 'Unsupported game type.' });
     }
+
+    // Clean up existing engine for this gameId if any
+    const existingEngine = activeGames.get(gameId);
+    if (existingEngine && typeof existingEngine.cleanup === 'function') {
+      existingEngine.cleanup();
+    }
+
     let engine = new EngineClass(gameId);
     engine.onEvent = (type, data) => {
       io.to(gameId).emit(type, data);
@@ -371,6 +384,17 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
           gameType: engine.gameType,
           isSpectating: true
         }).catch(console.error);
+      }
+
+      // When match completes: reset ready states on the server and broadcast authoritative lobby state
+      if (type === 'game_over') {
+        const activeLobby = LobbyService.getLobby(gameId);
+        if (activeLobby) {
+          activeLobby.status = 'WAITING';
+          LobbyService.resetReadyStates(gameId);
+          io.to(gameId).emit('lobby_state', serializeLobby(activeLobby));
+          broadcastLobbies();
+        }
       }
 
       // Dual-cast to player-specific socket channels to ensure 100% delivery
@@ -418,9 +442,10 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
       broadcastGameStates(gameId, engine);
     };
 
+    // Keep the lobby alive in LobbyService with PLAYING status!
+    lobby.status = 'PLAYING';
     engine.startGame();
     activeGames.set(gameId, engine);
-    LobbyService.lobbies.delete(gameId);
     broadcastLobbies();
 
     for (const p of playersList) {
@@ -563,7 +588,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
       broadcastGameStates(gameId, engine);
     };
 
-    if (engine.status === 'FINISHED' && engine.gameType !== 'SCRIBBLE') {
+    if (engine.status === 'FINISHED' && engine.gameType !== 'SCRIBBLE' && engine.gameType !== 'DEMOLITION_DERBY') {
       setTimeout(() => {
         engine.players.forEach(p => {
           presenceService.clearPlaying(p.userId, null, gameId).catch(console.error);
@@ -764,13 +789,18 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
       lobby = {
         id: gameId,
         hostId,
-        gameType: engine.gameType || 'FLAPPY_BIRD',
+        gameType: engine.gameType || 'DEMOLITION_DERBY',
         players: playersMap,
         status: 'WAITING',
         settings: engine.settings || { maxPlayers: 8 },
         createdAt: new Date()
       };
       LobbyService.lobbies.set(gameId, lobby);
+    } else if (lobby) {
+      lobby.status = 'WAITING';
+      for (const p of lobby.players.values()) {
+        p.isReady = false;
+      }
     }
     return lobby;
   };
@@ -1011,42 +1041,44 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
   });
 
   socket.on('derby_return_to_lobby', async ({ gameId, userId }) => {
-    const engine = activeGames.get(gameId);
-    if (engine && engine.gameType === 'DEMOLITION_DERBY') {
-      engine.handlePlayerAction(userId, 'return_to_lobby', {});
+    const effectiveUserId = userId || socketToUser?.get(socket.id)?.userId;
+    socket.join(gameId);
+
+    if (effectiveUserId) {
+      await presenceService.clearPlaying(effectiveUserId, socket.id, gameId).catch(console.error);
     }
 
-    await presenceService.clearPlaying(userId, socket.id, gameId);
+    const engine = activeGames.get(gameId);
+    if (engine && engine.gameType === 'DEMOLITION_DERBY' && effectiveUserId) {
+      engine.handlePlayerAction(effectiveUserId, 'return_to_lobby', {});
+    }
 
-    if (!engine || engine.status === 'FINISHED') {
-      const lobby = restoreLobbyFromEngine(gameId, engine);
-      if (lobby) {
-        const player = lobby.players.get(userId);
-        if (player && player.role !== 'HOST') {
-          player.isReady = false;
-        }
-        socket.join(gameId);
-        io.to(gameId).emit('lobby_state', serializeLobby(lobby));
-        broadcastLobbies();
+    let lobby = LobbyService.getLobby(gameId);
+    if (!lobby && engine) {
+      lobby = restoreLobbyFromEngine(gameId, engine);
+    }
+    if (lobby) {
+      lobby.status = 'WAITING';
+      const player = lobby.players.get(effectiveUserId);
+      if (player && player.role !== 'HOST') {
+        player.isReady = false;
       }
-    } else {
-      socket.join(gameId);
+      io.to(gameId).emit('lobby_state', serializeLobby(lobby));
+      broadcastLobbies();
     }
   });
 
   socket.on('derby_select_car', ({ gameId, userId, carId }) => {
     const effectiveUserId = userId || socketToUser?.get(socket.id)?.userId;
     console.log(`[GameSocket] derby_select_car: gameId=${gameId}, userId=${effectiveUserId}, carId=${carId}`);
+
+    const res = LobbyService.selectCar(gameId, effectiveUserId, carId);
+    if (res && res.error) {
+      return socket.emit('game_error', { message: res.error });
+    }
+
     const lobby = LobbyService.getLobby(gameId);
     if (lobby) {
-      let player = lobby.players.get(effectiveUserId);
-      if (!player && effectiveUserId) {
-        player = Array.from(lobby.players.values()).find(p => p.userId === effectiveUserId);
-      }
-      if (player) {
-        player.selectedCarId = carId;
-        console.log(`[GameSocket] Updated player ${player.nickname} (${effectiveUserId}) selectedCarId to ${carId}`);
-      }
       io.to(gameId).emit('lobby_state', serializeLobby(lobby));
       broadcastLobbies();
     }
@@ -1066,6 +1098,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
       if (!lobby.settings) lobby.settings = {};
       lobby.settings.arenaId = arenaId;
       io.to(gameId).emit('lobby_state', serializeLobby(lobby));
+      broadcastLobbies();
     }
 
     const engine = activeGames.get(gameId);
@@ -1076,18 +1109,20 @@ function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser)
 
   socket.on('derby_reset_lobby', async ({ gameId }) => {
     const engine = activeGames.get(gameId);
-    const lobby = restoreLobbyFromEngine(gameId, engine);
-
     if (engine) {
       engine.players.forEach(p => {
         presenceService.clearPlaying(p.userId, null, gameId).catch(console.error);
       });
     }
 
+    let lobby = LobbyService.getLobby(gameId);
+    if (!lobby && engine) {
+      lobby = restoreLobbyFromEngine(gameId, engine);
+    }
+
     if (lobby) {
-      for (const p of lobby.players.values()) {
-        p.isReady = p.role === 'HOST';
-      }
+      lobby.status = 'WAITING';
+      LobbyService.resetReadyStates(gameId);
       io.to(gameId).emit('lobby_state', serializeLobby(lobby));
     }
 
