@@ -433,7 +433,6 @@ function create3DVehicleFromGLB(
     accentColor: accentColorHex,
     currentDamageLevel: 'CLEAN',
   };
-
   captureOriginalVehicleVisualState(veh);
   return veh;
 }
@@ -526,7 +525,7 @@ function buildRoadCrusherV8(
   bodyGroup.add(roofMesh);
 
   // Window Steel Safety Bars
-  for (let zOffset of [-0.4, 0, 0.4]) {
+  for (const zOffset of [-0.4, 0, 0.4]) {
     const barL = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, cabinH * 0.85), steelMat);
     barL.position.set(-cabinW * 0.51, h * 0.82, l * 0.06 + zOffset);
     bodyGroup.add(barL);
@@ -542,7 +541,7 @@ function buildRoadCrusherV8(
   mainBar.castShadow = true;
   bullBarGroup.add(mainBar);
 
-  for (let xOffset of [-w * 0.40, -w * 0.15, w * 0.15, w * 0.40]) {
+  for (const xOffset of [-w * 0.40, -w * 0.15, w * 0.15, w * 0.40]) {
     const fang = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, h * 0.55), steelMat);
     fang.position.set(xOffset, h * 0.46, -l * 0.50);
     fang.castShadow = true;
@@ -662,7 +661,6 @@ function buildRoadCrusherV8(
     accentColor: accentColorHex,
     currentDamageLevel: 'CLEAN',
   };
-
   captureOriginalVehicleVisualState(veh);
   return veh;
 }
@@ -860,7 +858,6 @@ function buildIronTanker(
     accentColor: accentColorHex,
     currentDamageLevel: 'CLEAN',
   };
-
   captureOriginalVehicleVisualState(veh);
   return veh;
 }
@@ -1068,7 +1065,6 @@ function buildApexPhantom(
     accentColor: accentColorHex,
     currentDamageLevel: 'CLEAN',
   };
-
   captureOriginalVehicleVisualState(veh);
   return veh;
 }
@@ -1155,7 +1151,7 @@ function buildArmoredJuggernaut(
   bullBarGroup.add(plowRight);
 
   // V-Plow Spikes
-  for (let s of [-w * 0.45, -w * 0.22, 0, w * 0.22, w * 0.45]) {
+  for (const s of [-w * 0.45, -w * 0.22, 0, w * 0.22, w * 0.45]) {
     const spike = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.42, 8), heavyIron);
     spike.rotation.x = -Math.PI / 2;
     spike.position.set(s, h * 0.45, -l * 0.55);
@@ -1349,6 +1345,8 @@ export function update3DVehicleObject(
   root.rotation.y = state.rotationY;
 
   // 2. Wheel Steering Pivot (Y Axis)
+  // Left (ratio = -1): turns to -X (positive angle around +Y) -> wheelGroup.rotation.y = -(-1) * 0.55 = +0.55 (Left!)
+  // Right (ratio = +1): turns to +X (negative angle around +Y) -> wheelGroup.rotation.y = -(+1) * 0.55 = -0.55 (Right!)
   const maxSteerAngle = 0.55;
   const steerAngle = -steeringAngleRatio * maxSteerAngle;
   wheelFLGroup.rotation.y = steerAngle;
@@ -1417,6 +1415,8 @@ export function applyVisualDamageToMesh(vehObj: Vehicle3DObject, level: DamageLe
   } = vehObj;
 
   const severity = level === 'SCRATCHED' ? 0.25 : level === 'DENTED' ? 0.5 : level === 'CRUMPLED' ? 0.75 : level === 'WRECKED' ? 1.0 : 0.0;
+  if (severity === 0) return;
+
   const dir = vehObj.lastImpactLocalDir || new THREE.Vector3(0, 0, -1);
 
   // Front impact damage (Forward is -Z)

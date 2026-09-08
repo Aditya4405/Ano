@@ -10,6 +10,8 @@ import {
 } from '@/components/games/demolition-derby/types';
 import { socketService } from '@/lib/socket';
 import { ARENAS, VEHICLES } from '@/components/games/demolition-derby/DerbyPhysicsEngine';
+import { derbySoundSystem } from '@/components/games/demolition-derby/DerbySoundSystem';
+import { derbyAssetPreloader } from '@/lib/derbyAssetPreloader';
 
 const STORAGE_KEY = 'ano_demolition_derby_save_v1';
 
@@ -60,6 +62,9 @@ interface DemolitionDerbyState {
   createLobby: (userId: string, nickname: string, arenaId?: ArenaId) => void;
   joinLobby: (gameId: string, userId: string, nickname: string) => void;
   toggleReady: (gameId: string, userId: string, isReady: boolean) => void;
+  kickPlayer: (gameId: string, hostId: string, targetUserId: string) => void;
+  invitePlayer: (gameId: string, senderId: string, senderName: string, targetUserId: string) => void;
+  reportAssetsReady: (gameId: string, userId: string, selectedCarId?: VehicleId) => void;
   startMatch: (gameId: string, hostId: string) => void;
   leaveLobby: (userId: string) => void;
   sendSelectCar: (gameId: string, userId: string, carId: VehicleId) => void;
@@ -133,7 +138,7 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
   bestScores: saved?.bestScores ?? {},
   bestSurvivalTimes: saved?.bestSurvivalTimes ?? {},
   selectedDifficulty: saved?.selectedDifficulty ?? 'MEDIUM',
-  soundMuted: saved?.soundMuted ?? false,
+  soundMuted: saved?.soundMuted ?? true,
 
   roomState: null,
   availableLobbies: [],
@@ -144,15 +149,6 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
   matchTotalPlayers: 0,
 
   selectVehicle: (id: VehicleId, userId?: string) => {
-    const { roomState } = get();
-    if (roomState && userId) {
-      const localP = roomState.players.find((p) => p.userId === userId);
-      if (localP && localP.isReady && localP.role !== 'HOST') {
-        set({ lobbyError: 'Cannot change vehicle while READY. Cancel ready first.' });
-        return;
-      }
-    }
-
     set((s) => {
       const next = { ...s, selectedVehicle: id };
       saveState(next);
@@ -161,13 +157,14 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
         updatedRoomState = {
           ...s.roomState,
           players: s.roomState.players.map((p) =>
-            p.userId === userId ? { ...p, selectedCarId: id } : p
+            p.userId === userId ? { ...p, selectedCarId: id, assetReady: true } : p
           ),
         };
       }
       return { selectedVehicle: id, roomState: updatedRoomState };
     });
 
+    const { roomState } = get();
     if (roomState) {
       const socket = socketService.getSocket();
       if (socket) {
@@ -175,6 +172,11 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
           gameId: roomState.id,
           userId: userId || '',
           carId: id,
+        });
+        socket.emit('derby_assets_ready', {
+          gameId: roomState.id,
+          userId: userId || '',
+          selectedCarId: id,
         });
       }
     }
@@ -285,7 +287,7 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
       const nextIndex = currentArenaDef ? currentArenaDef.index + 1 : 1;
       const nextArenaDef = Object.values(ARENAS).find((a) => a.index === nextIndex);
 
-      let updatedUnlocked = [...s.unlockedArenas];
+      const updatedUnlocked = [...s.unlockedArenas];
       if (isWin && nextArenaDef && !updatedUnlocked.includes(nextArenaDef.id)) {
         updatedUnlocked.push(nextArenaDef.id);
         newArenaUnlocked = nextArenaDef.id;
@@ -313,9 +315,11 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
 
   toggleSound: () => {
     set((s) => {
-      const next = { ...s, soundMuted: !s.soundMuted };
+      const nextMuted = !s.soundMuted;
+      const next = { ...s, soundMuted: nextMuted };
       saveState(next);
-      return { soundMuted: !s.soundMuted };
+      derbySoundSystem.setMuted(nextMuted);
+      return { soundMuted: nextMuted };
     });
   },
 
@@ -543,11 +547,13 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
     const emitCreate = () => {
       const arenaDef = ARENAS[arenaId] || ARENAS.arena_1;
       const { selectedVehicle } = get();
+      const isAssetReady = derbyAssetPreloader.getState().isReady;
       socket.emit('lobby_create', {
         gameType: 'DEMOLITION_DERBY',
         userId,
         nickname,
         selectedCarId: selectedVehicle || 'road_crusher',
+        assetReady: isAssetReady,
         arenaId,
         settings: {
           arenaId,
@@ -602,13 +608,14 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
     set({ lobbyError: null });
     const { selectedVehicle } = get();
     const carToSend = selectedVehicle || 'road_crusher';
+    const isAssetReady = derbyAssetPreloader.getState().isReady;
     if (!socket.connected) {
       socket.connect();
       socket.once('connect', () => {
-        socket.emit('lobby_join', { gameId, userId, nickname, selectedCarId: carToSend });
+        socket.emit('lobby_join', { gameId, userId, nickname, selectedCarId: carToSend, assetReady: isAssetReady });
       });
     } else {
-      socket.emit('lobby_join', { gameId, userId, nickname, selectedCarId: carToSend });
+      socket.emit('lobby_join', { gameId, userId, nickname, selectedCarId: carToSend, assetReady: isAssetReady });
     }
   },
 
@@ -619,6 +626,33 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
     }
   },
 
+  kickPlayer: (gameId: string, hostId: string, targetUserId: string) => {
+    const socket = socketService.getSocket();
+    if (socket) {
+      socket.emit('lobby_kick', { gameId, hostId, targetUserId });
+    }
+  },
+
+  invitePlayer: (gameId: string, senderId: string, senderName: string, targetUserId: string) => {
+    const socket = socketService.getSocket();
+    if (socket) {
+      socket.emit('lobby_invite', {
+        gameId,
+        senderId,
+        senderName,
+        targetUserId,
+        gameType: 'DEMOLITION_DERBY',
+      });
+    }
+  },
+
+  reportAssetsReady: (gameId: string, userId: string, selectedCarId?: VehicleId) => {
+    const socket = socketService.getSocket();
+    const carId = selectedCarId || get().selectedVehicle || 'road_crusher';
+    if (socket) {
+      socket.emit('derby_assets_ready', { gameId, userId, selectedCarId: carId });
+    }
+  },
   startMatch: (gameId: string, hostId?: string) => {
     const socket = socketService.getSocket();
     const actualHostId = hostId || get().roomState?.hostId;

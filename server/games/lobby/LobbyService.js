@@ -62,13 +62,21 @@ class LobbyService {
   async createLobby(lobbyId, hostId, hostName, gameType, customSettings = {}) {
     // Proactively clean up any previous lobbies the user was in or hosting
     const affectedLobbies = await this.removeUserFromAllLobbies(hostId, lobbyId);
-    const hostCarId = customSettings?.selectedCarId || 'road_crusher';
 
+    const hostCarId = customSettings?.selectedCarId || 'road_crusher';
+    const isHostAssetReady = customSettings?.assetReady ?? true;
     const lobby = {
       id: lobbyId,
       hostId,
       gameType,
-      players: new Map([[hostId, { userId: hostId, nickname: hostName, isReady: true, role: 'HOST', selectedCarId: hostCarId }]]),
+      players: new Map([[hostId, {
+        userId: hostId,
+        nickname: hostName,
+        isReady: true,
+        role: 'HOST',
+        selectedCarId: hostCarId,
+        assetReady: isHostAssetReady
+      }]]),
       status: 'WAITING',
       settings: {
         maxPlayers: customSettings?.maxPlayers || MAX_PLAYERS[gameType] || DEFAULT_MAX_PLAYERS,
@@ -95,70 +103,86 @@ class LobbyService {
     return { lobby, affectedLobbies };
   }
 
- async joinLobby(lobbyId, userId, nickname, extraData = {}) {
-  const lobby = this.lobbies.get(lobbyId);
-  if (!lobby) return { lobby: null, affectedLobbies: [] };
+  async joinLobby(lobbyId, userId, nickname, extraData = {}) {
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) return { lobby: null, affectedLobbies: [] };
+    const maxPlayers = lobby.settings?.maxPlayers || MAX_PLAYERS[lobby.gameType] || DEFAULT_MAX_PLAYERS;
+    if (lobby.players.size >= maxPlayers && !lobby.players.has(userId)) {
+      return { lobby: null, affectedLobbies: [] };
+    }
 
-  const maxPlayers =
-    lobby.settings?.maxPlayers ||
-    MAX_PLAYERS[lobby.gameType] ||
-    DEFAULT_MAX_PLAYERS;
+    // Clean up user from any other lobbies first
+    const affectedLobbies = await this.removeUserFromAllLobbies(userId, lobbyId);
 
-  if (lobby.players.size >= maxPlayers && !lobby.players.has(userId)) {
-    return { lobby: null, affectedLobbies: [] };
-  }
+    const isHost = lobby.hostId === userId;
+    const existingPlayer = lobby.players.get(userId);
+    const selectedCarId = extraData?.selectedCarId || existingPlayer?.selectedCarId || 'road_crusher';
+    const isJoinerAssetReady = extraData?.assetReady ?? true;
 
-  // Clean up user from any other lobbies first
-  const affectedLobbies = await this.removeUserFromAllLobbies(userId, lobbyId);
-
-  const isHost = lobby.hostId === userId;
-  const existingPlayer = lobby.players.get(userId);
-
-  const player = {
-    userId,
-    nickname,
-    isReady: existingPlayer?.isReady ?? isHost,
-    role: isHost ? 'HOST' : 'PLAYER',
-    selectedCarId: extraData?.selectedCarId || existingPlayer?.selectedCarId || 'road_crusher'
-  };
-
-  lobby.players.set(userId, player);
-
-  await GamePersistenceService.addPlayer(
-    lobbyId,
-    userId,
-    nickname,
-    player.role
-  ).catch(() => {});
-
-  return { lobby, affectedLobbies };
-}
-selectCar(lobbyId, userId, carId) {
-  const lobby = this.lobbies.get(lobbyId);
-  if (!lobby) return { success: false, error: 'Lobby not found' };
-
-  const player = lobby.players.get(userId);
-  if (!player) return { success: false, error: 'Player not found in lobby' };
-
-  if (player.isReady && player.role !== 'HOST') {
-    return {
-      success: false,
-      error: 'Cannot change car while READY. Unready first.',
-      lobby
+    const player = {
+      userId,
+      nickname,
+      isReady: existingPlayer?.isReady ?? isHost,
+      role: isHost ? 'HOST' : 'PLAYER',
+      selectedCarId,
+      assetReady: isJoinerAssetReady
     };
+    lobby.players.set(userId, player);
+    await GamePersistenceService.addPlayer(lobbyId, userId, nickname, player.role).catch(() => {});
+    return { lobby, affectedLobbies };
   }
 
-  player.selectedCarId = carId;
+  selectCar(lobbyId, userId, carId) {
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) return { success: false, error: 'Lobby not found' };
 
-  return { success: true, lobby };
-}
+    const player = lobby.players.get(userId);
+    if (!player) return { success: false, error: 'Player not found in lobby' };
+
+    if (player.isReady && player.role !== 'HOST') {
+      return {
+        success: false,
+        error: 'Cannot change car while READY. Unready first.',
+        lobby
+      };
+    }
+
+    player.selectedCarId = carId;
+    return { success: true, lobby };
+  }
+
+  async leaveLobby(lobbyId, userId) {
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) return null;
+
+    lobby.players.delete(userId);
+    await GamePersistenceService.removePlayer(lobbyId, userId).catch(() => {});
+
+    if (lobby.players.size === 0) {
+      this.lobbies.delete(lobbyId);
+      return null;
+    }
+
+    if (lobby.hostId === userId) {
+      // Nominate next host
+      const nextHostId = lobby.players.keys().next().value;
+      lobby.hostId = nextHostId;
+      const nextHost = lobby.players.get(nextHostId);
+      if (nextHost) {
+        nextHost.role = 'HOST';
+        nextHost.isReady = true;
+        await GamePersistenceService.addPlayer(lobbyId, nextHostId, nextHost.nickname, 'HOST').catch(() => {});
+      }
+    }
+    return lobby;
+  }
 
   toggleReady(lobbyId, userId, isReady) {
     const lobby = this.lobbies.get(lobbyId);
     if (!lobby) return null;
 
     const player = lobby.players.get(userId);
-    if (player) {
+    if (player && player.role !== 'HOST') {
       player.isReady = Boolean(isReady);
     }
     return lobby;
@@ -169,7 +193,9 @@ selectCar(lobbyId, userId, carId) {
     if (!lobby) return null;
 
     for (const player of lobby.players.values()) {
-      player.isReady = false;
+      if (player.role !== 'HOST') {
+        player.isReady = false;
+      }
     }
     return lobby;
   }

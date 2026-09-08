@@ -1337,6 +1337,40 @@ export function DemolitionDerbyCanvas({
         </div>
       )}
 
+      {/* TOP LEFT: PLAYER VEHICLE STATUS CARD */}
+      <div className="absolute top-4 left-4 pointer-events-none z-30 bg-neutral-950/85 border border-white/10 p-3.5 rounded-2xl backdrop-blur-md shadow-2xl w-64">
+        <div className="flex justify-between items-center mb-1.5">
+          <div className="font-black text-xs text-amber-400 uppercase tracking-wider">
+            {localNickname || 'ADITYA'} <span className="text-gray-400 font-normal">#23</span>
+          </div>
+          <div
+            className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider ${
+              playerHp > 70
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                : playerHp > 35
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                : 'bg-red-500/20 text-red-400 border border-red-500/40 animate-pulse'
+            }`}
+          >
+            {playerHp > 70 ? 'HEALTHY' : playerHp > 35 ? 'DAMAGED' : playerHp > 0 ? 'CRITICAL' : 'DESTROYED'}
+          </div>
+        </div>
+
+        {/* Health Bar Progress */}
+        <div className="w-full bg-neutral-800 h-3 rounded-full overflow-hidden border border-white/10 p-0.5">
+          <div
+            className={`h-full rounded-full transition-all duration-300 ${
+              playerHp > 70 ? 'bg-emerald-500' : playerHp > 35 ? 'bg-amber-500' : 'bg-red-600'
+            }`}
+            style={{ width: `${Math.max(0, playerHp)}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-[10px] text-gray-400 font-bold mt-1">
+          <span>HP</span>
+          <span>{playerHp} / 100</span>
+        </div>
+      </div>
+
       {/* TOP CENTER: ARENA & MATCH TIMER HEADER */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-none z-30 flex flex-col items-center">
         <div className="bg-neutral-950/85 border border-white/10 px-5 py-2 rounded-2xl backdrop-blur-md shadow-2xl flex items-center gap-4">

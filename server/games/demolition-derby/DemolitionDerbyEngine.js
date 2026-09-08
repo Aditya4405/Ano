@@ -826,6 +826,15 @@ class DemolitionDerbyEngine extends BaseGameEngine {
     this.impactCooldowns.clear();
     this.processedCollisions.clear();
   }
+
+  restoreState(state) {
+    this.status = state.status;
+    this.seed = state.seed;
+    this.startTime = state.startTime;
+    if (state.settings) this.settings = state.settings;
+    if (state.results) this.results = state.results;
+    if (state.totalPlayers) this.totalStartedPlayers = state.totalPlayers;
+  }
 }
 
 module.exports = DemolitionDerbyEngine;

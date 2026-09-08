@@ -22,18 +22,24 @@ class SocketService {
       }
       const targetUrl = customUrl || SOCKET_URL;
       this.socket = io(targetUrl, {
+        transports: ['polling', 'websocket'],
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
+        timeout: 10000,
       });
 
       this.socket.on('connect', () => {
-        console.log('Socket connected:', this.socket?.id, 'to:', targetUrl);
+        console.log('[SocketService] Connected:', this.socket?.id, 'to:', targetUrl);
+      });
+
+      this.socket.on('connect_error', (err) => {
+        console.warn('[SocketService] Connection error to', targetUrl, ':', err.message);
       });
 
       this.socket.on('disconnect', (reason) => {
-        console.log('Socket disconnected:', reason);
+        console.log('[SocketService] Disconnected:', reason);
       });
     }
     return this.socket;
@@ -47,11 +53,14 @@ class SocketService {
   }
 
   getSocket() {
-    // If not connected yet, connect automatically when getting the socket
     if (!this.socket) {
       return this.connect();
     }
     return this.socket;
+  }
+
+  isConnected(): boolean {
+    return Boolean(this.socket && this.socket.connected);
   }
 }
 

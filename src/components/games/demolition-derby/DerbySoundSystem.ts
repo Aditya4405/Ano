@@ -7,10 +7,11 @@ class DerbySoundSystem {
   private ctx: AudioContext | null = null;
   private engineOsc: OscillatorNode | null = null;
   private engineGain: GainNode | null = null;
-  private isMuted: boolean = false;
+  private isMuted: boolean = true;
   private engineRunning: boolean = false;
 
   private initCtx() {
+    if (this.isMuted) return;
     if (!this.ctx && typeof window !== 'undefined') {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioCtx) {
@@ -18,14 +19,26 @@ class DerbySoundSystem {
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
     }
   }
 
   public setMuted(muted: boolean) {
     this.isMuted = muted;
-    if (muted && this.engineGain) {
-      this.engineGain.gain.setValueAtTime(0, this.ctx?.currentTime || 0);
+    if (muted) {
+      this.stopEngineSound();
+      if (this.engineGain && this.ctx) {
+        try {
+          this.engineGain.gain.setValueAtTime(0, this.ctx.currentTime);
+        } catch (e) {}
+      }
+      if (this.ctx && this.ctx.state === 'running') {
+        this.ctx.suspend().catch(() => {});
+      }
+    } else {
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
     }
   }
 

@@ -583,7 +583,7 @@ io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
   // Register generic multiplayer framework socket listeners
-  registerGameSockets(io, socket, onlineUsers, activeGames);
+  registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser);
 
   // ========================
   // GLOBAL PRESENCE

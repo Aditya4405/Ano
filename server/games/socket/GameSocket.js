@@ -30,13 +30,34 @@ const ENGINE_MAP = {
 };
 
 const GAME_DISPLAY_NAMES = presenceService.GAME_DISPLAY_NAMES || {
+  'BLUFF': 'Bluff',
+  'MEMORY_MATCH': 'Memory Match',
+  'DOTS_AND_BOXES': 'Dots and Boxes',
+  'COLOR_WARS': 'Color Wars',
+  'SCRIBBLE': 'Scribble',
+  'INK_DECEPTION': 'Ink & Deception',
+  'CHAMBER_CLASH': 'Chamber Clash',
+  'FLAPPY_BIRD': 'Flappy Bird',
+  'PAPER_FALL': 'PaperFall',
+  'ARROW_MAZE': 'Arrow Maze',
+  'ULTIMATE_TIC_TAC_TOE': 'Ultimate Tic-Tac-Toe',
   'DEMOLITION_DERBY': 'Demolition Derby',
 };
 
 // In-memory chat message buffer for active game lobbies and matches (gameId -> Message[])
 const gameChatMessages = new Map();
 
-function registerGameSockets(io, socket, onlineUsers, activeGames) {
+function registerGameSockets(io, socket, onlineUsers, activeGames, socketToUser) {
+  // Helper to update and broadcast user presence changes
+  const updatePresence = async (userId, presenceStatus) => {
+    try {
+      await userService.updatePresenceStatus(userId, presenceStatus);
+      io.emit('user_presence_change', { userId, presenceStatus });
+    } catch (err) {
+      console.error('Failed to update presence:', err.message);
+    }
+  };
+
   // Helper to serialize lobby map for client
   const serializeLobby = (lobby) => {
     if (!lobby) return null;
@@ -73,12 +94,16 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     socket.emit('lobbies_list_response', LobbyService.getPublicLobbies());
   });
 
-  socket.on('lobby_create', async ({ gameType, userId, nickname, selectedCarId, arenaId }) => {
-    console.log(`Lobby create requested by ${nickname} (${userId}) for ${gameType} car=${selectedCarId}`);
+  socket.on('lobby_create', async (payload) => {
+    const { gameType, userId, nickname, selectedCarId, arenaId, assetReady, settings, ...extraSettings } = payload || {};
+    console.log(`Lobby create requested by ${nickname} (${userId}) for ${gameType} car=${selectedCarId} assetReady=${assetReady}`);
     const gameId = `game_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const customSettings = {
       ...(selectedCarId ? { selectedCarId } : {}),
-      ...(arenaId ? { arenaId } : {})
+      ...(arenaId ? { arenaId } : {}),
+      assetReady: assetReady !== undefined ? Boolean(assetReady) : true,
+      ...(settings || {}),
+      ...extraSettings
     };
     const { lobby, affectedLobbies } = await LobbyService.createLobby(gameId, userId, nickname, gameType, customSettings);
 
@@ -101,10 +126,15 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     broadcastLobbies();
   });
 
-  socket.on('lobby_join', async ({ gameId, userId, nickname, selectedCarId }) => {
-    console.log(`Player ${nickname} (${userId}) joined lobby ${gameId} with car=${selectedCarId}`);
+  socket.on('lobby_join', async (payload) => {
+    const { gameId, userId, nickname, selectedCarId, assetReady, ...extraData } = payload || {};
+    console.log(`Player ${nickname} (${userId}) joined lobby ${gameId} with car=${selectedCarId} assetReady=${assetReady}`);
 
-    const { lobby, affectedLobbies } = await LobbyService.joinLobby(gameId, userId, nickname, { selectedCarId });
+    const { lobby, affectedLobbies } = await LobbyService.joinLobby(gameId, userId, nickname, {
+      selectedCarId,
+      assetReady: assetReady !== undefined ? Boolean(assetReady) : true,
+      ...extraData
+    });
     if (!lobby) {
       return socket.emit('game_error', { message: 'Lobby is full or no longer exists.' });
     }
@@ -153,6 +183,26 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
       player.assetReady = true;
       console.log(`[ASSET READY] Player ${userId} assets ready (${assetVersion}) in lobby ${gameId}`);
     }
+
+    io.to(gameId).emit('lobby_state', serializeLobby(lobby));
+    broadcastLobbies();
+  });
+
+  // ── DEMOLITION DERBY: Client reports all 3D vehicle & arena assets finished loading ──
+  socket.on('derby_assets_ready', ({ gameId, userId, selectedCarId }) => {
+    const lobby = LobbyService.getLobby(gameId);
+    if (!lobby) return;
+    let player = lobby.players.get(userId);
+    if (!player && userId) {
+      player = Array.from(lobby.players.values()).find(p => p.userId === userId);
+    }
+    if (!player) return;
+
+    player.assetReady = true;
+    if (selectedCarId) {
+      player.selectedCarId = selectedCarId;
+    }
+    console.log(`[DERBY ASSETS READY] Player ${userId} (${player.nickname}) vehicle ${player.selectedCarId || 'road_crusher'} assets ready in lobby ${gameId}`);
 
     io.to(gameId).emit('lobby_state', serializeLobby(lobby));
     broadcastLobbies();
@@ -347,7 +397,17 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
         }
       }
 
-      // Auto-sync game state on critical events to prevent desyncs
+      // Dual-cast to player-specific socket channels to ensure 100% delivery
+      if (engine.players) {
+        engine.players.forEach((p, id) => {
+          const sockets = onlineUsers.get(id);
+          if (sockets) {
+            sockets.forEach(sId => io.to(sId).emit(type, data));
+          }
+        });
+      }
+
+      // Auto-sync game state on critical events to prevent desyncs (e.g. on timeouts or skip turns)
       const SYNC_EVENTS = ['round_started', 'turn_started', 'player_damaged', 'player_healed', 'player_eliminated', 'game_started', 'round_finished', 'status_added', 'status_removed', 'extra_turn_granted', 'shell_inverted', 'shell_ejected', 'item_stolen'];
       if (SYNC_EVENTS.includes(type)) {
         broadcastGameStates(gameId, engine);
@@ -590,8 +650,6 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     
     console.log(`[Ink & Deception] Received canvas image to save for game ${gameId}`);
   });
-
-
 
   // Handle sudden disconnects (e.g. closing tab)
   socket.on('disconnect', () => {
@@ -953,7 +1011,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
 
   socket.on('derby_transform_update', (payload = {}) => {
     const { gameId, userId, playerId, ...data } = payload;
-    const effectiveUserId = userId || playerId;
+    const effectiveUserId = userId || playerId || socketToUser?.get(socket.id)?.userId;
     const engine = activeGames.get(gameId);
     if (engine && engine.gameType === 'DEMOLITION_DERBY' && effectiveUserId) {
       engine.handlePlayerAction(effectiveUserId, 'transform_update', data);
@@ -962,7 +1020,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
 
   socket.on('derby_hit_impact', (payload = {}) => {
     const { gameId, userId, attackerId, ...data } = payload;
-    const effectiveUserId = attackerId || userId;
+    const effectiveUserId = attackerId || userId || socketToUser?.get(socket.id)?.userId;
     const engine = activeGames.get(gameId);
     if (engine && engine.gameType === 'DEMOLITION_DERBY' && effectiveUserId) {
       engine.handlePlayerAction(effectiveUserId, 'hit_impact', {
@@ -975,7 +1033,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
 
   socket.on('derby_env_impact', (payload = {}) => {
     const { gameId, userId, playerId, ...data } = payload;
-    const effectiveUserId = playerId || userId;
+    const effectiveUserId = playerId || userId || socketToUser?.get(socket.id)?.userId;
     const engine = activeGames.get(gameId);
     if (engine && engine.gameType === 'DEMOLITION_DERBY' && effectiveUserId) {
       engine.handlePlayerAction(effectiveUserId, 'env_impact', data);
@@ -983,7 +1041,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
   });
 
   socket.on('derby_return_to_lobby', async ({ gameId, userId }) => {
-    const effectiveUserId = userId;
+    const effectiveUserId = userId || socketToUser?.get(socket.id)?.userId;
     socket.join(gameId);
 
     if (effectiveUserId) {
@@ -991,7 +1049,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
 
     const engine = activeGames.get(gameId);
-    if (engine && engine.gameType === 'DEMOLITION_DERBY') {
+    if (engine && engine.gameType === 'DEMOLITION_DERBY' && effectiveUserId) {
       engine.handlePlayerAction(effectiveUserId, 'return_to_lobby', {});
     }
 
@@ -1011,7 +1069,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
   });
 
   socket.on('derby_select_car', ({ gameId, userId, carId }) => {
-    const effectiveUserId = userId;
+    const effectiveUserId = userId || socketToUser?.get(socket.id)?.userId;
     console.log(`[GameSocket] derby_select_car: gameId=${gameId}, userId=${effectiveUserId}, carId=${carId}`);
 
     const res = LobbyService.selectCar(gameId, effectiveUserId, carId);
@@ -1026,7 +1084,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
 
     const engine = activeGames.get(gameId);
-    if (engine && engine.gameType === 'DEMOLITION_DERBY' && engine.status !== 'PLAYING') {
+    if (engine && engine.gameType === 'DEMOLITION_DERBY') {
       engine.handlePlayerAction(effectiveUserId, 'select_car', { carId });
     }
   });
@@ -1044,7 +1102,7 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
     }
 
     const engine = activeGames.get(gameId);
-    if (engine && engine.gameType === 'DEMOLITION_DERBY' && engine.status !== 'PLAYING') {
+    if (engine && engine.gameType === 'DEMOLITION_DERBY') {
       engine.handlePlayerAction(hostId, 'select_arena', { arenaId });
     }
   });
@@ -1066,8 +1124,10 @@ function registerGameSockets(io, socket, onlineUsers, activeGames) {
       lobby.status = 'WAITING';
       LobbyService.resetReadyStates(gameId);
       io.to(gameId).emit('lobby_state', serializeLobby(lobby));
-      broadcastLobbies();
     }
+
+    activeGames.delete(gameId);
+    broadcastLobbies();
   });
 }
 
