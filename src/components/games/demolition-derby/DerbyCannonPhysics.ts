@@ -100,7 +100,7 @@ export class DerbyCannonPhysics {
     if (arena.hasObstacles) {
       ARENA_OBSTACLES.forEach((ob) => {
         let shape: CANNON.Shape;
-        let height = ob.height || 1.2;
+        const height = ob.height || 1.2;
 
         if (ob.type === 'ramp') {
           shape = new CANNON.Box(new CANNON.Vec3((ob.width || 8.5) / 2, height / 2, (ob.length || 7.0) / 2));

@@ -80,11 +80,11 @@ class LobbyService {
       status: 'WAITING',
       settings: {
         maxPlayers: customSettings?.maxPlayers || MAX_PLAYERS[gameType] || DEFAULT_MAX_PLAYERS,
-        boardSize: gameType === 'COLOR_WARS' ? 7 : (gameType === 'DOTS_AND_BOXES' ? 5 : undefined), // Default 7x7 for Color Wars
-        turnTimer: (gameType === 'COLOR_WARS' || gameType === 'DOTS_AND_BOXES' || gameType === 'CHAMBER_CLASH' || gameType === 'ULTIMATE_TIC_TAC_TOE') ? 30 : undefined, // 30s turn timer
-        pairCount: gameType === 'MEMORY_MATCH' ? 12 : undefined, // Default 12 pairs (4x6) for Memory Match
+        boardSize: gameType === 'COLOR_WARS' ? 7 : (gameType === 'DOTS_AND_BOXES' ? 5 : undefined),
+        turnTimer: (gameType === 'COLOR_WARS' || gameType === 'DOTS_AND_BOXES' || gameType === 'CHAMBER_CLASH' || gameType === 'ULTIMATE_TIC_TAC_TOE') ? 30 : undefined,
+        pairCount: gameType === 'MEMORY_MATCH' ? 12 : undefined,
         mode: gameType === 'PAPER_FALL' ? 'SURVIVAL' : undefined,
-        difficulty: gameType === 'PAPER_FALL' ? 'MEDIUM' : undefined,
+        difficulty: (gameType === 'PAPER_FALL' || gameType === 'ULTIMATE_TIC_TAC_TOE') ? 'MEDIUM' : undefined,
         matchDuration: gameType === 'PAPER_FALL' ? 60 : undefined,
         multiplayerMode: gameType === 'ARROW_MAZE' ? 'LEVELS' : undefined,
         levelCount: gameType === 'ARROW_MAZE' ? 10 : undefined,
@@ -115,12 +115,14 @@ class LobbyService {
     const affectedLobbies = await this.removeUserFromAllLobbies(userId, lobbyId);
 
     const isHost = lobby.hostId === userId;
-    const selectedCarId = extraData?.selectedCarId || 'road_crusher';
+    const existingPlayer = lobby.players.get(userId);
+    const selectedCarId = extraData?.selectedCarId || existingPlayer?.selectedCarId || 'road_crusher';
     const isJoinerAssetReady = extraData?.assetReady ?? true;
+
     const player = {
       userId,
       nickname,
-      isReady: isHost,
+      isReady: existingPlayer?.isReady ?? isHost,
       role: isHost ? 'HOST' : 'PLAYER',
       selectedCarId,
       assetReady: isJoinerAssetReady
@@ -132,12 +134,21 @@ class LobbyService {
 
   selectCar(lobbyId, userId, carId) {
     const lobby = this.lobbies.get(lobbyId);
-    if (!lobby) return null;
+    if (!lobby) return { success: false, error: 'Lobby not found' };
+
     const player = lobby.players.get(userId);
-    if (player) {
-      player.selectedCarId = carId;
+    if (!player) return { success: false, error: 'Player not found in lobby' };
+
+    if (player.isReady && player.role !== 'HOST') {
+      return {
+        success: false,
+        error: 'Cannot change car while READY. Unready first.',
+        lobby
+      };
     }
-    return lobby;
+
+    player.selectedCarId = carId;
+    return { success: true, lobby };
   }
 
   async leaveLobby(lobbyId, userId) {
@@ -172,8 +183,27 @@ class LobbyService {
 
     const player = lobby.players.get(userId);
     if (player && player.role !== 'HOST') {
-      player.isReady = isReady;
+      player.isReady = Boolean(isReady);
     }
+    return lobby;
+  }
+
+  resetReadyStates(lobbyId) {
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) return null;
+
+    for (const player of lobby.players.values()) {
+      if (player.role !== 'HOST') {
+        player.isReady = false;
+      }
+    }
+    return lobby;
+  }
+
+  setLobbyStatus(lobbyId, status) {
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) return null;
+    lobby.status = status;
     return lobby;
   }
 

@@ -287,7 +287,7 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
       const nextIndex = currentArenaDef ? currentArenaDef.index + 1 : 1;
       const nextArenaDef = Object.values(ARENAS).find((a) => a.index === nextIndex);
 
-      let updatedUnlocked = [...s.unlockedArenas];
+      const updatedUnlocked = [...s.unlockedArenas];
       if (isWin && nextArenaDef && !updatedUnlocked.includes(nextArenaDef.id)) {
         updatedUnlocked.push(nextArenaDef.id);
         newArenaUnlocked = nextArenaDef.id;
@@ -653,7 +653,6 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
       socket.emit('derby_assets_ready', { gameId, userId, selectedCarId: carId });
     }
   },
-
   startMatch: (gameId: string, hostId?: string) => {
     const socket = socketService.getSocket();
     const actualHostId = hostId || get().roomState?.hostId;
