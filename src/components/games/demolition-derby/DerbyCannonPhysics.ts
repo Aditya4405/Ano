@@ -1,6 +1,6 @@
 import * as CANNON from 'cannon-es';
 import { ArenaDefinition, VehicleState } from './types';
-import { ARENA_OBSTACLES } from './DerbyPhysicsEngine';
+import { getArenaObstacles } from './DerbyPhysicsEngine';
 
 export interface CannonVehicleBody {
   chassisBody: CANNON.Body;
@@ -98,7 +98,7 @@ export class DerbyCannonPhysics {
 
     // Add Physical Obstacles
     if (arena.hasObstacles) {
-      ARENA_OBSTACLES.forEach((ob) => {
+      getArenaObstacles(arena.id).forEach((ob) => {
         let shape: CANNON.Shape;
         const height = ob.height || 1.2;
 
