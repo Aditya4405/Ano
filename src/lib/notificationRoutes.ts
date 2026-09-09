@@ -61,6 +61,8 @@ export function resolveGameRoute(gameType?: string, gameId?: string): string {
     'numberhunt': 'number-hunt',
     'ultimate-tic-tac-toe': 'ultimate-tic-tac-toe',
     'ultimatetictactoe': 'ultimate-tic-tac-toe',
+    'demolition-derby': 'demolition-derby',
+    'demolitionderby': 'demolition-derby',
     '2048': '2048',
     'minesweeper': 'minesweeper',
   };

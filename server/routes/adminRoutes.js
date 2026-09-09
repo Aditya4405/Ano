@@ -2,6 +2,8 @@ const express = require('express');
 const prisma = require('../db');
 const ipService = require('../services/ipService');
 
+const presenceService = require('../services/presenceService');
+
 // Factory: accepts in-memory Maps from the main server
 module.exports = function createAdminRoutes(onlineUsersMap, roomsMap, activeGamesMap) {
   const router = express.Router();
@@ -139,9 +141,197 @@ router.get('/users', async (req, res) => {
 
     res.json(users.map(u => ({
       ...u,
-      gamesPlayed: u._count.gameStats
+      gamesPlayed: u._count.gameStats,
+      isOnline: onlineUsersMap ? (onlineUsersMap.get(u.id)?.size || 0) > 0 : false
     })));
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ──── LIVE PRESENCE & ACTIVITY FEED ────
+router.get('/presence/activity', async (req, res) => {
+  try {
+    const { search, filter, limit = 100 } = req.query;
+
+    // 1. Collect currently online user IDs from live in-memory map
+    const onlineUserIds = [];
+    if (onlineUsersMap) {
+      for (const [uId, socketSet] of onlineUsersMap.entries()) {
+        if (socketSet && socketSet.size > 0) {
+          onlineUserIds.push(uId);
+        }
+      }
+    }
+
+    // 2. Fetch live presence statuses from presenceService
+    let allPresences = {};
+    try {
+      allPresences = await presenceService.getAllPresences();
+    } catch (e) {
+      // Fallback gracefully
+    }
+
+    // 3. Build Prisma query filters
+    let where = {};
+    if (search) {
+      where.OR = [
+        { nickname: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { id: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (filter === 'online') {
+      where.id = { in: onlineUserIds };
+    } else if (filter === 'offline') {
+      where.id = { notIn: onlineUserIds };
+    }
+
+    // Fetch users ordered by lastSeen descending
+    const users = await prisma.user.findMany({
+      where,
+      orderBy: { lastSeen: 'desc' },
+      take: Math.min(parseInt(limit) || 100, 300),
+      select: {
+        id: true,
+        nickname: true,
+        email: true,
+        avatar: true,
+        role: true,
+        isBanned: true,
+        isAnonymous: true,
+        createdAt: true,
+        lastSeen: true,
+        presenceStatus: true,
+        _count: {
+          select: { gameStats: true }
+        }
+      }
+    });
+
+    // If online users exist matching search that weren't in the top slice, ensure they are included
+    if (onlineUserIds.length > 0 && filter !== 'offline') {
+      const fetchedIds = new Set(users.map(u => u.id));
+      const missingOnlineIds = onlineUserIds.filter(id => !fetchedIds.has(id));
+      if (missingOnlineIds.length > 0) {
+        const extraOnlineUsers = await prisma.user.findMany({
+          where: {
+            id: { in: missingOnlineIds },
+            ...(search ? where : {})
+          },
+          select: {
+            id: true,
+            nickname: true,
+            email: true,
+            avatar: true,
+            role: true,
+            isBanned: true,
+            isAnonymous: true,
+            createdAt: true,
+            lastSeen: true,
+            presenceStatus: true,
+            _count: {
+              select: { gameStats: true }
+            }
+          }
+        });
+        users.push(...extraOnlineUsers);
+      }
+    }
+
+    // 4. Map user records with real-time indicators
+    let mapped = users.map(u => {
+      const isOnline = onlineUserIds.includes(u.id);
+      const activeSocketsCount = onlineUsersMap && onlineUsersMap.get(u.id) ? onlineUsersMap.get(u.id).size : 0;
+      const presence = allPresences[u.id] || null;
+
+      let currentActivity = 'Offline';
+      let isPlaying = false;
+      let gameInfo = null;
+
+      if (isOnline) {
+        if (presence && presence.status === 'PLAYING' && presence.game) {
+          isPlaying = true;
+          gameInfo = presence.game;
+          currentActivity = `${presence.game.isSpectating ? 'Spectating' : 'Playing'} ${presence.game.gameName || 'Game'}`;
+        } else if (u.presenceStatus) {
+          currentActivity = u.presenceStatus;
+          if (u.presenceStatus.toLowerCase().includes('playing')) {
+            isPlaying = true;
+          }
+        } else {
+          currentActivity = 'Online';
+        }
+      }
+
+      const effectiveLastSeen = isOnline ? new Date() : u.lastSeen;
+
+      return {
+        id: u.id,
+        nickname: u.nickname,
+        email: u.email,
+        avatar: u.avatar,
+        role: u.role,
+        isBanned: u.isBanned,
+        isAnonymous: u.isAnonymous,
+        createdAt: u.createdAt,
+        lastSeen: effectiveLastSeen,
+        lastSeenTimestamp: new Date(effectiveLastSeen).getTime(),
+        gamesPlayed: u._count.gameStats,
+        isOnline,
+        isPlaying,
+        gameInfo,
+        activeSocketsCount,
+        currentActivity
+      };
+    });
+
+    // 5. Apply playing filter if requested
+    if (filter === 'playing') {
+      mapped = mapped.filter(u => u.isOnline && u.isPlaying);
+    }
+
+    // 6. SORT:
+    // First show who are online, then the first last user who was online and so on (descending by lastSeen)
+    mapped.sort((a, b) => {
+      // Online users come first
+      if (a.isOnline && !b.isOnline) return -1;
+      if (!a.isOnline && b.isOnline) return 1;
+
+      // Both online: playing users prioritized, then by activity
+      if (a.isOnline && b.isOnline) {
+        if (a.isPlaying && !b.isPlaying) return -1;
+        if (!a.isPlaying && b.isPlaying) return 1;
+        return b.lastSeenTimestamp - a.lastSeenTimestamp;
+      }
+
+      // Both offline: sort descending by lastSeen (the most recently online first)
+      return b.lastSeenTimestamp - a.lastSeenTimestamp;
+    });
+
+    // 7. Aggregate presence stats
+    const now = Date.now();
+    const oneDayAgo = now - 24 * 60 * 60 * 1000;
+    const totalUsers = await prisma.user.count();
+    const playingCount = Object.values(allPresences).filter(p => p && p.status === 'PLAYING').length;
+    const recentActiveCount = await prisma.user.count({
+      where: {
+        lastSeen: { gte: new Date(oneDayAgo) }
+      }
+    });
+
+    res.json({
+      users: mapped,
+      summary: {
+        onlineCount: onlineUserIds.length,
+        playingCount,
+        recentActiveCount,
+        totalUsers
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching online activity:', err);
     res.status(500).json({ error: err.message });
   }
 });

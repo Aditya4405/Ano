@@ -707,6 +707,10 @@ export const useDemolitionDerbyStore = create<DemolitionDerbyState>((set, get) =
   },
 
   sendReturnToLobby: (gameId: string, userId: string) => {
+    set((s) => ({
+      roomState: s.roomState ? { ...s.roomState, status: 'WAITING' } : null,
+      multiplayerResults: null,
+    }));
     const socket = socketService.getSocket();
     if (socket) {
       socket.emit('derby_return_to_lobby', { gameId, userId });

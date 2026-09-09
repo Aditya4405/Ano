@@ -51,7 +51,7 @@ const userService = {
         where: { id: userId },
         update: { 
           isOnline,
-          ...(isOnline ? {} : { lastSeen: new Date() }),
+          lastSeen: new Date(),
           ...(isOnline ? {} : { presenceStatus: null }) // Clear status when offline
         },
         create: {

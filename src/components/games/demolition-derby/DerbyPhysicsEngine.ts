@@ -838,29 +838,78 @@ export function getRampSurfaceAt(
   };
 }
 
+export function getObstacleSurfaceAt(
+  worldX: number,
+  worldZ: number,
+  ob: ArenaObstacle | ObstacleCollider
+): { inside: boolean; height: number; normalX: number; normalY: number; normalZ: number; isRamp: boolean } {
+  if (ob.type === 'ramp') {
+    const rq = getRampSurfaceAt(worldX, worldZ, ob);
+    return { ...rq, isRamp: true };
+  }
+
+  // Solid obstacles with flat top support (concrete blocks, containers, barrels, tire stacks, scrap wrecks)
+  const rot = ob.rotation || 0;
+  const cosR = Math.cos(-rot);
+  const sinR = Math.sin(-rot);
+  const dx = worldX - ob.x;
+  const dz = worldZ - ob.z;
+  const lx = dx * cosR - dz * sinR;
+  const lz = dx * sinR + dz * cosR;
+
+  let topH = 1.3;
+  if ('halfHeight' in ob && typeof ob.halfHeight === 'number') {
+    const cy = ob.y !== undefined ? ob.y : ob.halfHeight;
+    topH = cy + ob.halfHeight;
+  } else if ('height' in ob && typeof ob.height === 'number') {
+    topH = ob.height;
+  }
+
+  if (ob.type === 'box' || ob.type === 'concrete_block') {
+    let halfW = 1.7;
+    let halfL = 0.7;
+    if ('halfWidth' in ob && typeof ob.halfWidth === 'number') halfW = ob.halfWidth;
+    else if ('width' in ob && typeof ob.width === 'number') halfW = ob.width / 2;
+    if ('halfLength' in ob && typeof ob.halfLength === 'number') halfL = ob.halfLength;
+    else if ('length' in ob && typeof ob.length === 'number') halfL = ob.length / 2;
+
+    if (Math.abs(lx) <= halfW && Math.abs(lz) <= halfL) {
+      return { inside: true, height: topH, normalX: 0, normalY: 1, normalZ: 0, isRamp: false };
+    }
+  } else if (ob.type === 'cylinder' || ob.type === 'tire_stack' || ob.type === 'metal_barrel' || ob.type === 'scrap_wreck' || ob.type === 'mound') {
+    const r = ('radius' in ob && typeof ob.radius === 'number') ? ob.radius : 1.2;
+    if (dx * dx + dz * dz <= r * r) {
+      return { inside: true, height: topH, normalX: 0, normalY: 1, normalZ: 0, isRamp: false };
+    }
+  }
+
+  return { inside: false, height: 0, normalX: 0, normalY: 1, normalZ: 0, isRamp: false };
+}
+
 export function getArenaSurfaceAt(
   worldX: number,
   worldZ: number,
   obstacles?: (ArenaObstacle | ObstacleCollider)[]
 ): { height: number; normalX: number; normalY: number; normalZ: number; isRamp: boolean } {
+  let maxHeight = 0;
+  let bestNormal = { x: 0, y: 1, z: 0 };
+  let isRamp = false;
+
   if (obstacles) {
     for (const ob of obstacles) {
-      if (ob.type === 'ramp') {
-        const rampQuery = getRampSurfaceAt(worldX, worldZ, ob);
-        if (rampQuery.inside) {
-          return {
-            height: rampQuery.height,
-            normalX: rampQuery.normalX,
-            normalY: rampQuery.normalY,
-            normalZ: rampQuery.normalZ,
-            isRamp: true,
-          };
-        }
+      if ('id' in ob && typeof ob.id === 'string' && ob.id.startsWith('perimeter_wall_')) {
+        continue;
+      }
+      const query = getObstacleSurfaceAt(worldX, worldZ, ob);
+      if (query.inside && query.height >= maxHeight) {
+        maxHeight = query.height;
+        bestNormal = { x: query.normalX, y: query.normalY, z: query.normalZ };
+        isRamp = query.isRamp;
       }
     }
   }
 
-  return { height: 0, normalX: 0, normalY: 1, normalZ: 0, isRamp: false };
+  return { height: maxHeight, normalX: bestNormal.x, normalY: bestNormal.y, normalZ: bestNormal.z, isRamp };
 }
 
 export function queryVehicleWheelSupport(
@@ -918,8 +967,23 @@ export function resolveVehicleVsStaticObstacles(
   const fwd = getVehicleForward(v.rotationY);
   const rgt = getVehicleRight(v.rotationY);
 
+  const vehHeight = (v.vehicleId && VEHICLES[v.vehicleId]?.height) || VEH_HEIGHT;
+  const vehBottom = v.y || 0;
+  const vehTop = vehBottom + vehHeight;
+
   for (const col of colliders) {
     if (col.type === 'ramp') continue; // Driveable surface
+
+    // Vertical clearance check: only collide if vehicle's vertical volume overlaps obstacle's physical height
+    const colHalfH = col.halfHeight !== undefined ? col.halfHeight : (col.type === 'cylinder' ? 0.7 : 0.65);
+    const colCenterY = col.y !== undefined ? col.y : colHalfH;
+    const colBottom = Math.max(0, colCenterY - colHalfH);
+    const colTop = colCenterY + colHalfH;
+
+    // If vehicle bottom is at or above obstacle top (with small clearance tolerance) OR vehicle top is below obstacle bottom: NO collision
+    if (vehBottom >= colTop - 0.05 || vehTop <= colBottom + 0.05) {
+      continue; // Vehicle is vertically above or below obstacle volume
+    }
 
     if (col.type === 'box' || col.type === 'wall') {
       const boxOBB: OrientedBoundingBox2D = {
@@ -1194,12 +1258,29 @@ export function checkVehicleCollision(
   nowTime: number = Date.now(),
   contactTrackerMap?: Map<string, VehicleContactRecord>
 ): CollisionResult | null {
+  const aHeight = (a.vehicleId && VEHICLES[a.vehicleId]?.height) || VEH_HEIGHT;
+  const bHeight = (b.vehicleId && VEHICLES[b.vehicleId]?.height) || VEH_HEIGHT;
+  const aBottom = a.y || 0;
+  const aTop = aBottom + aHeight;
+  const bBottom = b.y || 0;
+  const bTop = bBottom + bHeight;
+
+  const pairKey = a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`;
+  let contact = contactTrackerMap ? contactTrackerMap.get(pairKey) : undefined;
+
+  // Vertical clearance check between vehicles
+  if (aBottom > bTop || aTop < bBottom) {
+    if (contact) {
+      contact.isColliding = false;
+      contact.damageAppliedForCurrentImpact = false;
+    }
+    return null;
+  }
+
   const obbA = getVehicleOBB(a);
   const obbB = getVehicleOBB(b);
 
   const sat = satOBB2D(obbA, obbB);
-  const pairKey = a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`;
-  let contact = contactTrackerMap ? contactTrackerMap.get(pairKey) : undefined;
 
   if (!sat || !sat.colliding) {
     // Vehicles are not touching -> reset contact state so next collision re-arms
@@ -1448,6 +1529,10 @@ export function updateVehiclePhysics(
   for (let s = 0; s < numSubsteps; s++) {
     v.x += v.vx * subDt;
     v.z += v.vz * subDt;
+    if (v.isAirborne || (v.vy !== 0 && v.vy !== undefined)) {
+      v.y = (v.y || 0) + v.vy * subDt;
+      v.vy -= 18.0 * subDt;
+    }
 
     resolveVehicleVsStaticObstacles(v, colliders, nowTime, lastImpactPairMap, (speed, colId) => {
       obstacleHit = colId;
@@ -1462,11 +1547,12 @@ export function updateVehiclePhysics(
   // 5. Four-Wheel Surface Support & Ramp Climbing / Jumping
   const wheelSupport = queryVehicleWheelSupport(v, colliders);
 
-  if (v.isAirborne || v.y > wheelSupport.chassisY + 0.08) {
-    v.vy -= 18.0 * dt; // Gravity
-    v.y += v.vy * dt;
+  if (v.isAirborne || (v.y || 0) > wheelSupport.chassisY + 0.08) {
+    if (!v.isAirborne && (v.y || 0) > wheelSupport.chassisY + 0.08) {
+      v.isAirborne = true;
+    }
 
-    if (v.y <= wheelSupport.chassisY) {
+    if ((v.y || 0) <= wheelSupport.chassisY) {
       v.y = wheelSupport.chassisY;
       v.vy = 0;
       v.isAirborne = false;
@@ -1481,9 +1567,17 @@ export function updateVehiclePhysics(
     if (wheelSupport.isRampSupported && v.jumpCooldown <= 0 && forwardSpeed > 7.5) {
       for (const ob of colliders) {
         if (ob.type === 'ramp') {
+          const rot = ob.rotation || 0;
+          const cosR = Math.cos(-rot);
+          const sinR = Math.sin(-rot);
           const dx = v.x - ob.x;
           const dz = v.z - ob.z;
-          if (dz < -1.5 && Math.abs(dx) < 3.8) {
+          const lx = dx * cosR - dz * sinR;
+          const lz = dx * sinR + dz * cosR;
+          const halfL = ob.halfLength !== undefined ? ob.halfLength : 3.5;
+          const halfW = ob.halfWidth !== undefined ? ob.halfWidth : 4.25;
+
+          if (lz <= -halfL * 0.3 && Math.abs(lx) <= halfW + 0.5) {
             v.isAirborne = true;
             v.vy = 6.0 + (forwardSpeed / maxForwardSpeed) * 6.5;
             v.jumpCooldown = 1.8;

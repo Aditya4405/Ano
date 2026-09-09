@@ -187,8 +187,9 @@ export const DEVELOPERS: Developer[] = [
     avatar: "/Aditya-prajapati.jpeg",
     location: "India",
     tagline: "Junior Developer",
-    bio: "Junior developer at Ano contributing to real-time multiplayer party games and interactive social deduction mechanics.",
+    bio: "Junior developer at Ano contributing to real-time multiplayer party games, 3D demolition vehicular combat lobbies, and interactive social deduction mechanics.",
     contributions: [
+      "Demolition Derby chaotic 3D vehicular combat arena, multiplayer lobby room matchmaking, and collision damage physics",
       "Ink & Deception social deduction game loop, canvas stroke synchronization, and impostor mechanics",
       "Ultimate Tic-Tac-Toe strategic 9x9 multi-board engine, authoritative sub-grid evaluation, and multiplayer lobby system",
       "Collaborative drawing workflow, role reveals, and real-time player voting systems"
@@ -198,10 +199,15 @@ export const DEVELOPERS: Developer[] = [
       "TypeScript",
       "Next.js",
       "Socket.IO",
+      "Three.js",
       "HTML5 Canvas",
       "TailwindCSS"
     ],
     games: [
+      {
+        gameId: "demolition-derby",
+        roleInGame: "Game Developer"
+      },
       {
         gameId: "ink-deception",
         roleInGame: "Game Developer"
@@ -222,6 +228,26 @@ export const DEVELOPERS: Developer[] = [
 
 // Centralized Games Built At Ano
 export const ABOUT_GAMES: AboutGame[] = [
+  {
+    id: "demolition-derby",
+    name: "Demolition Derby",
+    tagline: "High-octane 3D vehicular combat & multiplayer lobby destruction",
+    description: "Multiplayer 3D vehicular combat derby. Crash into opponents, trigger high-impact collisions, survive in tactical arenas, and compete in real-time lobbies.",
+    icon: "🏎️",
+    color: "from-amber-600 via-red-600 to-zinc-900",
+    href: "/dashboard/games/demolition-derby",
+    supportedModes: "MULTIPLAYER",
+    status: "Live",
+    technologies: ["React", "Three.js", "Socket.IO", "Zustand", "Custom 3D Physics Engine"],
+    featured: true,
+    developers: [
+      {
+        developerId: "aditya-prajapati",
+        role: "Game Developer",
+        contribution: "Multiplayer lobby architecture, real-time vehicular combat synchronization, and arena collision dynamics."
+      }
+    ]
+  },
   {
     id: "ultimate-tic-tac-toe",
     name: "Ultimate Tic-Tac-Toe",
