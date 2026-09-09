@@ -7,13 +7,62 @@ import { useUserStore } from "@/store/useUserStore";
 import { GlassCard } from "@/components/layout/GlassCard";
 import { 
   Users, ShieldAlert, Bug, BarChart3, Settings, 
-  Megaphone, Gift, FileText, Check, Trash2, Star, LogOut, Loader2,
-  Shield, Globe, Clock, Laptop, AlertTriangle, X, Eye, Activity
+  Megaphone, FileText, Check, Trash2, Star, LogOut, Loader2,
+  Shield, Globe, Clock, Laptop, AlertTriangle, X, Eye, Activity,
+  RefreshCw, Gamepad2, Radio
 } from "lucide-react";
 
 import { UserAvatar } from "@/components/ui/UserAvatar";
 
-type Section = 'dashboard' | 'users' | 'ip_analytics' | 'reviews' | 'bugs' | 'reports' | 'games' | 'announcements' | 'rewards' | 'settings' | 'audit_logs' | 'moderation';
+type Section = 'dashboard' | 'users' | 'online_activity' | 'ip_analytics' | 'reviews' | 'bugs' | 'reports' | 'announcements' | 'settings' | 'audit_logs' | 'moderation';
+
+interface OnlineActivityUser {
+  id: string;
+  nickname: string;
+  email: string | null;
+  avatar: string | null;
+  role: string;
+  isBanned: boolean;
+  isAnonymous: boolean;
+  createdAt: string;
+  lastSeen: string;
+  lastSeenTimestamp: number;
+  gamesPlayed: number;
+  isOnline: boolean;
+  isPlaying: boolean;
+  gameInfo: { gameName?: string; gameType?: string; isSpectating?: boolean } | null;
+  activeSocketsCount: number;
+  currentActivity: string;
+}
+
+interface OnlineActivitySummary {
+  onlineCount: number;
+  playingCount: number;
+  recentActiveCount: number;
+  totalUsers: number;
+}
+
+function formatTimeAgo(dateInput: string | number | Date): string {
+  const date = new Date(dateInput);
+  const now = new Date();
+  const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+  if (isNaN(diffInSeconds) || diffInSeconds < 30) return 'Just now';
+  if (diffInSeconds < 60) return `${diffInSeconds}s ago`;
+  if (diffInSeconds < 3600) {
+    const mins = Math.floor(diffInSeconds / 60);
+    return `${mins} min${mins > 1 ? 's' : ''} ago`;
+  }
+  if (diffInSeconds < 86400) {
+    const hours = Math.floor(diffInSeconds / 3600);
+    return `${hours} hr${hours > 1 ? 's' : ''} ago`;
+  }
+  if (diffInSeconds < 604800) {
+    const days = Math.floor(diffInSeconds / 86400);
+    return `${days} day${days > 1 ? 's' : ''} ago`;
+  }
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 interface IpAccount {
   id: string;
@@ -132,11 +181,6 @@ export default function AdminPortal() {
   const [reports, setReports] = useState<any[]>([]);
   const [loadingReports, setLoadingReports] = useState(false);
 
-  // Games config
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [games, setGames] = useState<any[]>([]);
-  const [loadingGames, setLoadingGames] = useState(false);
-
   // Announcements
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [announcements, setAnnouncements] = useState<any[]>([]);
@@ -146,13 +190,6 @@ export default function AdminPortal() {
   const [annColor, setAnnColor] = useState("red");
   const [annIcon] = useState("📢");
   const [annExpiry, setAnnExpiry] = useState("");
-
-  // Rewards
-  const [rewardType, setRewardType] = useState("COINS");
-  const [rewardValue, setRewardValue] = useState("");
-  const [recipientType, setRecipientType] = useState("ALL");
-  const [selectedUserIds, setSelectedUserIds] = useState("");
-  const [rewarding, setRewarding] = useState(false);
 
   // Audit Logs
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -168,9 +205,6 @@ export default function AdminPortal() {
   });
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
-
-  // Reward success
-  const [rewardSuccess, setRewardSuccess] = useState(false);
 
   // Moderation Queue
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -195,6 +229,42 @@ export default function AdminPortal() {
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reviewSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ipSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activitySearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Live Online & Activity State
+  const [onlineUsersList, setOnlineUsersList] = useState<OnlineActivityUser[]>([]);
+  const [onlineActivitySummary, setOnlineActivitySummary] = useState<OnlineActivitySummary | null>(null);
+  const [loadingOnlineActivity, setLoadingOnlineActivity] = useState(false);
+  const [activityFilter, setActivityFilter] = useState<'all' | 'online' | 'playing' | 'offline'>('all');
+  const [activitySearch, setActivitySearch] = useState("");
+  const [autoRefreshActivity, setAutoRefreshActivity] = useState(true);
+  const [lastActivityRefresh, setLastActivityRefresh] = useState<Date>(new Date());
+
+  const fetchOnlineActivity = async (isBackground = false) => {
+    if (!isBackground) setLoadingOnlineActivity(true);
+    try {
+      const queryParams = new URLSearchParams({
+        filter: activityFilter,
+        search: activitySearch,
+        limit: '150'
+      });
+      const res = await fetch(`${API_URL}/api/admin/presence/activity?${queryParams.toString()}`, {
+        headers: { 'x-user-id': userId || '' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setOnlineUsersList(data.users || []);
+        if (data.summary) {
+          setOnlineActivitySummary(data.summary);
+        }
+        setLastActivityRefresh(new Date());
+      }
+    } catch (err) {
+      console.error('Failed to fetch online activity:', err);
+    } finally {
+      if (!isBackground) setLoadingOnlineActivity(false);
+    }
+  };
 
   const fetchStats = async () => {
     setLoadingStats(true);
@@ -341,22 +411,6 @@ export default function AdminPortal() {
     }
   };
 
-  const fetchGames = async () => {
-    setLoadingGames(true);
-    try {
-      const res = await fetch(`${API_URL}/api/admin/games`, {
-        headers: { 'x-user-id': userId || '' }
-      });
-      if (res.ok) {
-        setGames(await res.json());
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingGames(false);
-    }
-  };
-
   const fetchAnnouncements = async () => {
     setLoadingAnnouncements(true);
     try {
@@ -446,6 +500,8 @@ export default function AdminPortal() {
     const timer = setTimeout(() => {
       if (activeSection === 'users') {
         fetchUsers();
+      } else if (activeSection === 'online_activity') {
+        fetchOnlineActivity();
       } else if (activeSection === 'ip_analytics') {
         fetchIpSummary();
         fetchIpList(1);
@@ -455,8 +511,6 @@ export default function AdminPortal() {
         fetchBugs();
       } else if (activeSection === 'reports') {
         fetchReports();
-      } else if (activeSection === 'games') {
-        fetchGames();
       } else if (activeSection === 'announcements') {
         fetchAnnouncements();
       } else if (activeSection === 'audit_logs') {
@@ -469,6 +523,25 @@ export default function AdminPortal() {
     }, 0);
     return () => clearTimeout(timer);
   }, [activeSection, role, userFilter]);
+
+  // Debounced search for online activity
+  useEffect(() => {
+    if (activeSection !== 'online_activity') return;
+    if (activitySearchTimerRef.current) clearTimeout(activitySearchTimerRef.current);
+    activitySearchTimerRef.current = setTimeout(() => {
+      fetchOnlineActivity();
+    }, 300);
+    return () => { if (activitySearchTimerRef.current) clearTimeout(activitySearchTimerRef.current); };
+  }, [activitySearch, activityFilter]);
+
+  // Auto-refresh for online presence (every 10 seconds)
+  useEffect(() => {
+    if (role !== 'SUPER_ADMIN' || activeSection !== 'online_activity' || !autoRefreshActivity) return;
+    const interval = setInterval(() => {
+      fetchOnlineActivity(true);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [role, activeSection, autoRefreshActivity, activityFilter, activitySearch]);
 
   // Debounced search for IP analytics
   useEffect(() => {
@@ -597,23 +670,6 @@ export default function AdminPortal() {
     }
   };
 
-  // Game config actions
-  const handleToggleGame = async (gameId: string, field: string, value: boolean) => {
-    try {
-      const res = await fetch(`${API_URL}/api/admin/games/${gameId}/toggle`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': userId || ''
-        },
-        body: JSON.stringify({ [field]: value })
-      });
-      if (res.ok) fetchGames();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   // Announcement actions
   const handlePublishAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -673,39 +729,6 @@ export default function AdminPortal() {
     }
   };
 
-  // Reward actions
-  const handleGrantReward = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!rewardValue.trim()) return;
-    setRewarding(true);
-
-    try {
-      const res = await fetch(`${API_URL}/api/admin/rewards/grant`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': userId || ''
-        },
-        body: JSON.stringify({
-          rewardType,
-          value: rewardValue,
-          recipientType,
-          selectedUserIds: selectedUserIds.split(',').map(i => i.trim()).filter(Boolean)
-        })
-      });
-      if (res.ok) {
-        setRewardValue("");
-        setSelectedUserIds("");
-        setRewardSuccess(true);
-        setTimeout(() => setRewardSuccess(false), 3000);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setRewarding(false);
-    }
-  };
-
   const handleSaveSettings = async () => {
     try {
       const res = await fetch(`${API_URL}/api/admin/settings`, {
@@ -752,28 +775,35 @@ export default function AdminPortal() {
           <nav className="space-y-1">
             {[
               { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+              { id: 'online_activity', label: 'Live Presence', icon: Activity },
               { id: 'users', label: 'Users', icon: Users },
               { id: 'ip_analytics', label: 'IP Analytics', icon: Shield },
               { id: 'reviews', label: 'Ratings & Reviews', icon: Star },
               { id: 'bugs', label: 'Bug Reports', icon: Bug },
               { id: 'reports', label: 'User Reports', icon: ShieldAlert },
-              { id: 'games', label: 'Games', icon: Megaphone },
               { id: 'announcements', label: 'Announcements', icon: Megaphone },
-              { id: 'rewards', label: 'Rewards', icon: Gift },
               { id: 'settings', label: 'Settings', icon: Settings },
               { id: 'audit_logs', label: 'Audit Logs', icon: FileText }
             ].map(item => (
               <button
                 key={item.id}
                 onClick={() => setActiveSection(item.id as Section)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
                   activeSection === item.id 
                     ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' 
                     : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
                 }`}
               >
-                <item.icon className="w-4 h-4" />
-                {item.label}
+                <div className="flex items-center gap-3">
+                  <item.icon className="w-4 h-4" />
+                  <span>{item.label}</span>
+                </div>
+                {item.id === 'online_activity' && (stats?.onlineUsers ?? 0) > 0 && (
+                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    {stats.onlineUsers}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -818,7 +848,16 @@ export default function AdminPortal() {
                   { label: "User Reports", value: stats?.openUserReports, color: "text-rose-400", sub: "Open mod flags" },
                   { label: "Pending Reviews", value: stats?.reviewsPending, color: "text-cyan-400", sub: "Feedback unread" }
                 ].map((c, i) => (
-                  <GlassCard key={i} className="p-5 flex flex-col justify-between min-h-[110px] border-zinc-800">
+                  <GlassCard 
+                    key={i} 
+                    onClick={() => {
+                      if (c.label === "Online Users") setActiveSection('online_activity');
+                      else if (c.label === "Total Users") setActiveSection('users');
+                    }}
+                    className={`p-5 flex flex-col justify-between min-h-[110px] border-zinc-800 ${
+                      c.label === "Online Users" || c.label === "Total Users" ? "cursor-pointer hover:border-zinc-700 transition-colors" : ""
+                    }`}
+                  >
                     <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">{c.label}</span>
                     {loadingStats ? (
                       <div className="h-8 w-24 bg-zinc-800 animate-pulse rounded-md mt-2" />
@@ -835,11 +874,12 @@ export default function AdminPortal() {
                 <GlassCard className="p-6 border-zinc-800 flex flex-col gap-4">
                   <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-300">Quick Tools</h3>
                   <div className="grid grid-cols-2 gap-3 text-xs font-semibold">
+                    <button onClick={() => setActiveSection('online_activity')} className="p-3 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-xl text-left transition-colors flex items-center justify-between">
+                      <span>🟢 Live Presence</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono">Live</span>
+                    </button>
                     <button onClick={() => setActiveSection('announcements')} className="p-3 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-xl text-left transition-colors">
                       📢 Broadcast Alert
-                    </button>
-                    <button onClick={() => setActiveSection('rewards')} className="p-3 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-xl text-left transition-colors">
-                      🎁 Grant Coins/Title
                     </button>
                     <button onClick={() => setActiveSection('users')} className="p-3 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-xl text-left transition-colors">
                       🚫 Moderation Queue
@@ -939,6 +979,357 @@ export default function AdminPortal() {
                     </tbody>
                   </table>
                   {users.length === 0 && <div className="text-center py-10 text-zinc-600 font-bold uppercase tracking-widest">No users found</div>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ──── VIEW: LIVE PRESENCE & USER ACTIVITY ──── */}
+          {activeSection === 'online_activity' && (
+            <div className="space-y-6">
+              {/* Top Presence Summary Metric Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <GlassCard className="p-5 border-zinc-800 flex flex-col justify-between relative overflow-hidden">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Online Right Now</span>
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-emerald-400">
+                      {loadingOnlineActivity ? <Loader2 className="w-6 h-6 animate-spin" /> : (onlineActivitySummary?.onlineCount ?? stats?.onlineUsers ?? 0)}
+                    </span>
+                    <span className="text-xs text-zinc-500 font-medium">players connected</span>
+                  </div>
+                  <span className="text-[10px] text-zinc-500 mt-2 font-medium">Live WebSocket connections</span>
+                </GlassCard>
+
+                <GlassCard className="p-5 border-zinc-800 flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">In-Game / Playing</span>
+                    <Gamepad2 className="w-4 h-4 text-purple-400" />
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-purple-400">
+                      {loadingOnlineActivity ? <Loader2 className="w-6 h-6 animate-spin" /> : (onlineActivitySummary?.playingCount ?? 0)}
+                    </span>
+                    <span className="text-xs text-zinc-500 font-medium">active matches</span>
+                  </div>
+                  <span className="text-[10px] text-zinc-500 mt-2 font-medium">Demolition, Tic-Tac-Toe, Bluff, etc.</span>
+                </GlassCard>
+
+                <GlassCard className="p-5 border-zinc-800 flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Active Past 24h</span>
+                    <Clock className="w-4 h-4 text-blue-400" />
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-blue-400">
+                      {loadingOnlineActivity ? <Loader2 className="w-6 h-6 animate-spin" /> : (onlineActivitySummary?.recentActiveCount ?? 0)}
+                    </span>
+                    <span className="text-xs text-zinc-500 font-medium">unique users</span>
+                  </div>
+                  <span className="text-[10px] text-zinc-500 mt-2 font-medium">Seen within the last 24 hours</span>
+                </GlassCard>
+
+                <GlassCard className="p-5 border-zinc-800 flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Total Accounts</span>
+                    <Users className="w-4 h-4 text-cyan-400" />
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-cyan-400">
+                      {loadingOnlineActivity ? <Loader2 className="w-6 h-6 animate-spin" /> : (onlineActivitySummary?.totalUsers ?? stats?.totalUsers ?? 0)}
+                    </span>
+                    <span className="text-xs text-zinc-500 font-medium">registered</span>
+                  </div>
+                  <span className="text-[10px] text-zinc-500 mt-2 font-medium">Platform registered user base</span>
+                </GlassCard>
+              </div>
+
+              {/* Filtering & Control Toolbar */}
+              <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-zinc-950/80 p-4 border border-zinc-800 rounded-2xl">
+                <div className="flex flex-1 items-center gap-3">
+                  <div className="relative flex-1 max-w-md">
+                    <input
+                      type="text"
+                      placeholder="Search online & recent users (name, email, ID)..."
+                      value={activitySearch}
+                      onChange={e => setActivitySearch(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 px-4 py-2 pl-9 rounded-xl text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500 transition-colors"
+                    />
+                    <Users className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
+                    {activitySearch && (
+                      <button
+                        onClick={() => setActivitySearch('')}
+                        className="absolute right-3 top-2.5 text-zinc-500 hover:text-zinc-300 text-xs"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filter chips */}
+                  <div className="hidden lg:flex items-center gap-1.5 bg-zinc-900 p-1 rounded-xl border border-zinc-800 text-xs font-semibold">
+                    {(
+                      [
+                        { id: 'all', label: 'All Users (Online First)' },
+                        { id: 'online', label: '🟢 Online Only' },
+                        { id: 'playing', label: '🎮 In-Game' },
+                        { id: 'offline', label: '🕒 Recently Offline' }
+                      ] as const
+                    ).map(tab => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActivityFilter(tab.id)}
+                        className={`px-3 py-1.5 rounded-lg transition-all ${
+                          activityFilter === tab.id
+                            ? 'bg-blue-600 text-white shadow-md'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right controls: auto-refresh toggle & refresh button */}
+                <div className="flex items-center gap-2 justify-end">
+                  {/* Filter dropdown for smaller screens */}
+                  <div className="lg:hidden">
+                    <select
+                      value={activityFilter}
+                      onChange={e => setActivityFilter(e.target.value as any)}
+                      className="bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 px-3 py-2 rounded-xl focus:outline-none"
+                    >
+                      <option value="all">All (Online First)</option>
+                      <option value="online">Online Only</option>
+                      <option value="playing">In-Game Only</option>
+                      <option value="offline">Offline / Recent</option>
+                    </select>
+                  </div>
+
+                  <button
+                    onClick={() => setAutoRefreshActivity(!autoRefreshActivity)}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${
+                      autoRefreshActivity
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                        : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'
+                    }`}
+                    title={autoRefreshActivity ? "Auto-refresh active (every 10s)" : "Auto-refresh paused"}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${autoRefreshActivity ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`} />
+                    <span>Auto 10s</span>
+                  </button>
+
+                  <button
+                    onClick={() => fetchOnlineActivity()}
+                    disabled={loadingOnlineActivity}
+                    className="flex items-center gap-2 px-3 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-xs font-semibold text-zinc-300 hover:text-white transition-colors"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingOnlineActivity ? 'animate-spin text-blue-400' : ''}`} />
+                    <span className="hidden sm:inline">Refresh</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Header Indicator */}
+              <div className="flex items-center justify-between text-xs text-zinc-500 px-1">
+                <span>
+                  Showing {onlineUsersList.length} users &bull; {onlineUsersList.filter(u => u.isOnline).length} currently online, followed by users ordered by last seen.
+                </span>
+                <span>Last updated: {lastActivityRefresh.toLocaleTimeString()}</span>
+              </div>
+
+              {/* Live Users Presence Table */}
+              {loadingOnlineActivity && onlineUsersList.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-24 text-zinc-500 gap-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="text-xs uppercase font-bold tracking-widest text-zinc-400">Loading live user presence...</span>
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-zinc-800/80 rounded-2xl bg-zinc-950 shadow-xl">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-zinc-800 text-zinc-500 uppercase tracking-widest text-[9px] font-bold bg-zinc-900/40">
+                        <th className="p-4">User</th>
+                        <th className="p-4">Status & Presence</th>
+                        <th className="p-4">Current Activity</th>
+                        <th className="p-4">Active Sessions</th>
+                        <th className="p-4">Last Seen / Online</th>
+                        <th className="p-4">Games Played</th>
+                        <th className="p-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-900/80">
+                      {onlineUsersList.map(u => (
+                        <tr
+                          key={u.id}
+                          className={`transition-colors ${
+                            u.isOnline
+                              ? 'bg-emerald-500/[0.02] hover:bg-emerald-500/[0.05]'
+                              : 'hover:bg-zinc-900/25'
+                          }`}
+                        >
+                          {/* User Identification */}
+                          <td className="p-4">
+                            <div className="flex items-center gap-3">
+                              <div className="relative">
+                                <UserAvatar
+                                  src={u.avatar}
+                                  nickname={u.nickname}
+                                  size="w-9 h-9"
+                                />
+                                {u.isOnline && (
+                                  <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-zinc-950"></span>
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex flex-col">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-zinc-100 text-sm">{u.nickname}</span>
+                                  {u.role === 'SUPER_ADMIN' && (
+                                    <span className="px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                      Admin
+                                    </span>
+                                  )}
+                                  {u.isBanned && (
+                                    <span className="px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase bg-red-500/20 text-red-400 border border-red-500/30">
+                                      Banned
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-zinc-400">{u.email || (u.isAnonymous ? 'Guest Player' : 'No Email')}</span>
+                                <span className="text-[9px] text-zinc-600 font-mono">{u.id}</span>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Live Status Badge */}
+                          <td className="p-4">
+                            {u.isOnline ? (
+                              u.isPlaying ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30 shadow-sm shadow-purple-500/10">
+                                  <Gamepad2 className="w-3 h-3 text-purple-400 animate-pulse" />
+                                  <span>In Game</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm shadow-emerald-500/10">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                                  <span>Online Now</span>
+                                </span>
+                              )
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold bg-zinc-800/80 text-zinc-400 border border-zinc-700/40">
+                                <span className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
+                                <span>Offline</span>
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Current Activity / Location */}
+                          <td className="p-4">
+                            {u.isOnline ? (
+                              <div className="flex flex-col">
+                                <span className="font-semibold text-zinc-200">{u.currentActivity}</span>
+                                {u.gameInfo && (
+                                  <span className="text-[10px] text-purple-400/80">
+                                    {u.gameInfo.isSpectating ? 'Spectating match' : 'Active participant'}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-zinc-500 italic">Last active {formatTimeAgo(u.lastSeen)}</span>
+                            )}
+                          </td>
+
+                          {/* Connected Sessions / Sockets */}
+                          <td className="p-4">
+                            {u.isOnline ? (
+                              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 font-mono text-[11px]">
+                                <Laptop className="w-3 h-3 text-blue-400" />
+                                <span>{u.activeSocketsCount} {u.activeSocketsCount === 1 ? 'tab' : 'tabs'}</span>
+                              </div>
+                            ) : (
+                              <span className="text-zinc-600 font-mono">—</span>
+                            )}
+                          </td>
+
+                          {/* Last Seen / Active Timestamp */}
+                          <td className="p-4" title={new Date(u.lastSeen).toLocaleString()}>
+                            {u.isOnline ? (
+                              <div className="flex flex-col">
+                                <span className="text-emerald-400 font-bold flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  Active Now
+                                </span>
+                                <span className="text-[10px] text-zinc-500">Connected</span>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col">
+                                <span className="text-zinc-300 font-semibold">{formatTimeAgo(u.lastSeen)}</span>
+                                <span className="text-[10px] text-zinc-500">{new Date(u.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Games Played Count */}
+                          <td className="p-4">
+                            <span className="px-2 py-1 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-300 font-semibold text-[11px]">
+                              {u.gamesPlayed} {u.gamesPlayed === 1 ? 'game' : 'games'}
+                            </span>
+                          </td>
+
+                          {/* Quick Admin Actions */}
+                          <td className="p-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => fetchUserSecurity(u.id)}
+                                className="px-2 py-1.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 rounded-lg font-bold transition-colors flex items-center gap-1"
+                                title="View IP History & Associated Accounts"
+                              >
+                                <Shield className="w-3 h-3" />
+                                <span className="text-[10px]">IP History</span>
+                              </button>
+                              {u.isBanned ? (
+                                <button
+                                  onClick={() => handleBanUser(u.id, false)}
+                                  className="px-2.5 py-1.5 bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 rounded-lg font-bold text-[10px] transition-colors"
+                                >
+                                  Unban
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleBanUser(u.id, true)}
+                                  className="px-2.5 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 rounded-lg font-bold text-[10px] transition-colors"
+                                >
+                                  Ban
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleDeleteUser(u.id)}
+                                className="p-1.5 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 hover:text-red-400 rounded-lg transition-colors"
+                                title="Delete User"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {onlineUsersList.length === 0 && (
+                    <div className="text-center py-16 text-zinc-600 font-bold uppercase tracking-widest">
+                      No users match the selected search or filter
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1418,57 +1809,6 @@ export default function AdminPortal() {
             </div>
           )}
 
-          {/* ──── VIEW: GAMES CONFIG ──── */}
-          {activeSection === 'games' && (
-            <div className="space-y-4">
-              {loadingGames ? (
-                <div className="flex justify-center py-20 text-zinc-500"><Loader2 className="w-8 h-8 animate-spin" /></div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {games.map(g => (
-                    <GlassCard key={g.id} className="p-5 border-zinc-800 flex flex-col justify-between gap-4">
-                      <div>
-                        <div className="flex justify-between items-center">
-                          <h4 className="font-bold text-sm text-zinc-200">{g.id.replace('_', ' ')}</h4>
-                          <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${g.isEnabled ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>{g.isEnabled ? 'ENABLED' : 'DISABLED'}</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4 mt-4 text-[10px] text-zinc-500">
-                          <div>
-                            <span className="block text-[8px] uppercase tracking-wider text-zinc-600 font-bold">Total Matches</span>
-                            <span className="text-sm font-bold text-zinc-300 mt-0.5 block">{g.totalMatches}</span>
-                          </div>
-                          <div>
-                            <span className="block text-[8px] uppercase tracking-wider text-zinc-600 font-bold">Avg Match Duration</span>
-                            <span className="text-sm font-bold text-zinc-300 mt-0.5 block">{g.avgDurationSeconds}s</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="border-t border-zinc-900/50 pt-3 flex justify-between items-center gap-2">
-                        <label className="flex items-center gap-2 text-[10px] text-zinc-400 font-bold uppercase">
-                          <input 
-                            type="checkbox" 
-                            checked={g.isEnabled}
-                            onChange={e => handleToggleGame(g.id, 'isEnabled', e.target.checked)}
-                            className="accent-blue-500" 
-                          /> Enabled
-                        </label>
-                        <label className="flex items-center gap-2 text-[10px] text-zinc-400 font-bold uppercase">
-                          <input 
-                            type="checkbox" 
-                            checked={g.isMaintenance}
-                            onChange={e => handleToggleGame(g.id, 'isMaintenance', e.target.checked)}
-                            className="accent-orange-500" 
-                          /> Maint.
-                        </label>
-                      </div>
-                    </GlassCard>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
           {/* ──── VIEW: ANNOUNCEMENTS ──── */}
           {activeSection === 'announcements' && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1570,72 +1910,7 @@ export default function AdminPortal() {
             </div>
           )}
 
-          {/* ──── VIEW: REWARDS ──── */}
-          {activeSection === 'rewards' && (
-            <GlassCard className="p-6 border-zinc-800 max-w-lg mx-auto">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-300 mb-4">Grant Rewards</h3>
-              <form onSubmit={handleGrantReward} className="space-y-4 text-xs">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-zinc-500">Reward Type</label>
-                  <select 
-                    value={rewardType}
-                    onChange={e => setRewardType(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-zinc-300 focus:outline-none"
-                  >
-                    <option value="COINS">🪙 Coins</option>
-                    <option value="TITLE">👑 Title / Nickname Badges</option>
-                    <option value="COSMETIC">🎭 Cosmetic Item</option>
-                  </select>
-                </div>
 
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-zinc-500">Value / Item ID</label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. 500, 'CHAMBER_CHAMP'..."
-                    value={rewardValue}
-                    onChange={e => setRewardValue(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-zinc-100 focus:outline-none"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-zinc-500">Recipients</label>
-                  <select 
-                    value={recipientType}
-                    onChange={e => setRecipientType(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-zinc-300 focus:outline-none"
-                  >
-                    <option value="ALL">Everyone</option>
-                    <option value="SELECTED">Selected User IDs</option>
-                  </select>
-                </div>
-
-                {recipientType === 'SELECTED' && (
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-zinc-500">Comma-separated User IDs</label>
-                    <input 
-                      type="text" 
-                      placeholder="google_10382, guest_1064"
-                      value={selectedUserIds}
-                      onChange={e => setSelectedUserIds(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-zinc-100 focus:outline-none font-mono"
-                    />
-                  </div>
-                )}
-
-                <button type="submit" disabled={rewarding} className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold uppercase tracking-wider text-[10px] transition-colors mt-2">
-                  {rewarding ? <Loader2 className="w-4 h-4 mx-auto animate-spin" /> : "Grant Reward ➔"}
-                </button>
-
-                {rewardSuccess && (
-                  <div className="flex items-center gap-2 text-green-400 text-xs font-bold bg-green-500/10 border border-green-500/20 px-3 py-2 rounded-xl mt-2">
-                    <Check className="w-4 h-4" /> Rewards granted successfully!
-                  </div>
-                )}
-              </form>
-            </GlassCard>
-          )}
 
           {/* ──── VIEW: AUDIT LOGS ──── */}
           {activeSection === 'audit_logs' && (
