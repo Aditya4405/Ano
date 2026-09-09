@@ -668,60 +668,72 @@ function createObstacleColliderDef(ob: ArenaObstacle): ObstacleCollider {
   const rot = ob.rotation || 0;
 
   if (ob.type === 'ramp') {
+    const rHeight = ob.height || 2.2;
+    const rWidth = ob.width || 8.0;
+    const rLength = ob.length || 6.5;
     return {
       id: ob.id,
       type: 'ramp',
       x: ob.x,
-      y: (ob.height || 2.2) / 2,
+      y: rHeight / 2,
       z: ob.z,
-      halfWidth: (ob.width || 8.0) / 2,
-      halfLength: (ob.length || 6.5) / 2,
-      halfHeight: (ob.height || 2.2) / 2,
-      rampHeight: ob.height || 2.2,
+      halfWidth: rWidth / 2,
+      halfLength: rLength / 2,
+      halfHeight: rHeight / 2,
+      rampHeight: rHeight,
       rotation: rot,
     };
   } else if (ob.type === 'concrete_block') {
+    const bHeight = ob.height || 1.3;
+    const bWidth = ob.width || 3.4;
+    const bLength = ob.length || 1.4;
     return {
       id: ob.id,
       type: 'box',
       x: ob.x,
-      y: 0.65,
+      y: bHeight / 2,
       z: ob.z,
-      halfWidth: (ob.width || 3.4) / 2,
-      halfLength: (ob.length || 1.4) / 2,
-      halfHeight: 0.65,
+      halfWidth: bWidth / 2,
+      halfLength: bLength / 2,
+      halfHeight: bHeight / 2,
       rotation: rot,
     };
   } else if (ob.type === 'tire_stack') {
+    const tHeight = ob.height || 1.88;
+    const tRadius = ob.radius ? ob.radius * 0.85 : 1.5;
     return {
       id: ob.id,
       type: 'cylinder',
       x: ob.x,
-      y: 0.95,
+      y: tHeight / 2,
       z: ob.z,
-      radius: ob.radius ? ob.radius * 0.95 : 1.8,
-      halfHeight: 0.95,
+      radius: tRadius,
+      halfHeight: tHeight / 2,
     };
   } else if (ob.type === 'metal_barrel') {
+    const bHeight = ob.height || 1.3;
+    const bRadius = ob.radius || 1.1;
     return {
       id: ob.id,
       type: 'cylinder',
       x: ob.x,
-      y: 0.65,
+      y: bHeight / 2,
       z: ob.z,
-      radius: ob.radius || 1.1,
-      halfHeight: 0.65,
+      radius: bRadius,
+      halfHeight: bHeight / 2,
     };
   } else {
-    // Scrap wreck
+    // Scrap wreck / boulder / mound
+    const wHeight = ob.height || 1.4;
+    const wRadius = ob.radius || 2.4;
     return {
       id: ob.id,
       type: 'cylinder',
       x: ob.x,
-      y: 1.1,
+      y: wHeight / 2,
       z: ob.z,
-      radius: ob.radius || 2.8,
-      halfHeight: 1.1,
+      radius: wRadius,
+      halfHeight: wHeight / 2,
     };
   }
 }
@@ -731,12 +743,12 @@ function createObstacleDebugGizmo(col: ObstacleCollider): THREE.Object3D | null 
   const wireMat = new THREE.LineBasicMaterial({ color: 0xeab308 });
 
   if (col.type === 'cylinder') {
-    const geo = new THREE.WireframeGeometry(new THREE.CylinderGeometry(col.radius, col.radius, (col.halfHeight || 1) * 2, 12));
+    const geo = new THREE.WireframeGeometry(new THREE.CylinderGeometry(col.radius || 1.2, col.radius || 1.2, (col.halfHeight || 0.7) * 2, 12));
     const mesh = new THREE.LineSegments(geo, wireMat);
     mesh.position.set(col.x, col.y, col.z);
     return mesh;
   } else if (col.type === 'box' || col.type === 'ramp') {
-    const geo = new THREE.WireframeGeometry(new THREE.BoxGeometry((col.halfWidth || 1) * 2, (col.halfHeight || 1) * 2, (col.halfLength || 1) * 2));
+    const geo = new THREE.WireframeGeometry(new THREE.BoxGeometry((col.halfWidth || 1) * 2, (col.halfHeight || 0.65) * 2, (col.halfLength || 1) * 2));
     const mesh = new THREE.LineSegments(geo, wireMat);
     mesh.position.set(col.x, col.y, col.z);
     if (col.rotation) mesh.rotation.y = col.rotation;
