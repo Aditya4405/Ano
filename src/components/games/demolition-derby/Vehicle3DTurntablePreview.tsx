@@ -107,10 +107,30 @@ export function Vehicle3DTurntablePreview({
       if (isDisposed) return;
       vehContainer.clear();
       const cloned = gltfScene.clone(true);
+      const mainColor = new THREE.Color(vehColor);
+      const accentColor = new THREE.Color(vehAccent);
+
       cloned.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
+          const mesh = child as THREE.Mesh;
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          if (mesh.material) {
+            if (Array.isArray(mesh.material)) {
+              mesh.material = mesh.material.map((m) => m.clone());
+            } else {
+              mesh.material = mesh.material.clone();
+            }
+
+            const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
+            if (mat && mat.name) {
+              if (mat.name.includes('DERBY_Mat_BodyPaint')) {
+                mat.color.copy(mainColor);
+              } else if (mat.name.includes('DERBY_Mat_AccentMetal')) {
+                mat.color.copy(accentColor);
+              }
+            }
+          }
         }
       });
       // Align orientation (Blender model front facing Z+ -> Three.js standard)

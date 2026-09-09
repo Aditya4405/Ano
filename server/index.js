@@ -26,7 +26,12 @@ const ipService = require('./services/ipService');
 const presenceService = require('./services/presenceService');
 const prisma = require('./db');
 const { getRedisClient, createRedisClient, isRedisAvailable, closeRedis } = require('./lib/redis');
-const { createAdapter } = require('@socket.io/redis-adapter');
+let createAdapter = null;
+try {
+  createAdapter = require('@socket.io/redis-adapter').createAdapter;
+} catch (e) {
+  // @socket.io/redis-adapter not installed; fallback to standalone
+}
 
 // Start cleanup service
 cleanupService.start();
@@ -59,18 +64,20 @@ const io = new Server(server, {
 
 // Setup Socket.IO Redis Adapter for multi-server scaling if Redis is available
 try {
-  const pubClient = createRedisClient('SocketIoPub');
-  const subClient = createRedisClient('SocketIoSub');
+  if (typeof createAdapter === 'function') {
+    const pubClient = createRedisClient('SocketIoPub');
+    const subClient = createRedisClient('SocketIoSub');
 
-  if (pubClient && subClient) {
-    Promise.all([pubClient.connect(), subClient.connect()])
-      .then(() => {
-        io.adapter(createAdapter(pubClient, subClient));
-        console.log('[Socket.IO] Redis adapter attached for multi-server scaling.');
-      })
-      .catch((err) => {
-        console.warn('[Socket.IO] Redis adapter connection failed, running standalone:', err.message);
-      });
+    if (pubClient && subClient) {
+      Promise.all([pubClient.connect(), subClient.connect()])
+        .then(() => {
+          io.adapter(createAdapter(pubClient, subClient));
+          console.log('[Socket.IO] Redis adapter attached for multi-server scaling.');
+        })
+        .catch((err) => {
+          console.warn('[Socket.IO] Redis adapter connection failed, running standalone:', err.message);
+        });
+    }
   }
 } catch (err) {
   console.warn('[Socket.IO] Could not attach Redis adapter, running standalone:', err.message);

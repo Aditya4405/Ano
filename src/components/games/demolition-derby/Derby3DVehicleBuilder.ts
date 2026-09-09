@@ -3,6 +3,25 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DamageLevel, DebrisPiece, VehicleId, VehicleState } from './types';
 import { VEHICLES } from './DerbyPhysicsEngine';
 
+export interface OriginalMaterialRecord {
+  mesh: THREE.Mesh;
+  material: THREE.Material | THREE.Material[];
+  originalColor?: THREE.Color;
+  originalRoughness?: number;
+  originalMetalness?: number;
+  originalEmissive?: THREE.Color;
+  originalEmissiveIntensity?: number;
+  originalOpacity?: number;
+  originalTransparent?: boolean;
+}
+
+export interface OriginalTransformRecord {
+  mesh: THREE.Object3D;
+  position: THREE.Vector3;
+  rotation: THREE.Euler;
+  scale: THREE.Vector3;
+}
+
 export interface Vehicle3DObject {
   root: THREE.Group;
   bodyGroup: THREE.Group;
@@ -35,6 +54,150 @@ export interface Vehicle3DObject {
   accentColor: string;
   currentDamageLevel: DamageLevel;
   lastImpactLocalDir?: THREE.Vector3;
+  originalMaterials?: OriginalMaterialRecord[];
+  originalTransforms?: OriginalTransformRecord[];
+}
+
+// ── CAPTURE BASE VEHICLE VISUAL STATE ────────────────────────
+export function captureOriginalVehicleVisualState(veh: Vehicle3DObject): void {
+  veh.originalMaterials = [];
+  veh.originalTransforms = [];
+
+  // Deep clone each material per mesh so NO materials are ever shared
+  veh.root.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh) {
+      const mesh = child as THREE.Mesh;
+      if (mesh.material) {
+        if (Array.isArray(mesh.material)) {
+          mesh.material = mesh.material.map((m) => m.clone());
+        } else {
+          mesh.material = mesh.material.clone();
+        }
+
+        const primaryMat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
+        veh.originalMaterials!.push({
+          mesh,
+          material: Array.isArray(mesh.material) ? mesh.material.map((m) => m.clone()) : mesh.material.clone(),
+          originalColor: primaryMat.color ? primaryMat.color.clone() : undefined,
+          originalRoughness: primaryMat.roughness !== undefined ? primaryMat.roughness : undefined,
+          originalMetalness: primaryMat.metalness !== undefined ? primaryMat.metalness : undefined,
+          originalEmissive: primaryMat.emissive ? primaryMat.emissive.clone() : undefined,
+          originalEmissiveIntensity: primaryMat.emissiveIntensity !== undefined ? primaryMat.emissiveIntensity : undefined,
+          originalOpacity: primaryMat.opacity !== undefined ? primaryMat.opacity : undefined,
+          originalTransparent: primaryMat.transparent,
+        });
+      }
+    }
+  });
+
+  const deformableParts: (THREE.Object3D | undefined)[] = [
+    veh.hoodMesh,
+    veh.frontBumperMesh,
+    veh.rearBumperMesh,
+    veh.trunkMesh,
+    veh.sideBarL,
+    veh.sideBarR,
+    veh.windowL,
+    veh.windowR,
+    veh.headlightL,
+    veh.headlightR,
+    veh.taillightL,
+    veh.taillightR,
+    veh.chassisMesh,
+    veh.cabinMesh,
+  ];
+
+  for (const part of deformableParts) {
+    if (part) {
+      veh.originalTransforms.push({
+        mesh: part,
+        position: part.position.clone(),
+        rotation: part.rotation.clone(),
+        scale: part.scale.clone(),
+      });
+    }
+  }
+}
+
+// ── RESTORE VEHICLE TO CLEAN ORIGINAL VISUAL STATE ───────────
+export function resetVehicleVisualState(vehObj: Vehicle3DObject): void {
+  vehObj.currentDamageLevel = 'CLEAN';
+  vehObj.lastImpactLocalDir = undefined;
+
+  // 1. Restore all original mesh transforms for deformable parts
+  if (vehObj.originalTransforms && vehObj.originalTransforms.length > 0) {
+    for (const record of vehObj.originalTransforms) {
+      if (record.mesh) {
+        record.mesh.position.copy(record.position);
+        record.mesh.rotation.copy(record.rotation);
+        record.mesh.scale.copy(record.scale);
+      }
+    }
+  } else {
+    if (vehObj.hoodMesh) vehObj.hoodMesh.rotation.set(0, 0, 0);
+    if (vehObj.frontBumperMesh) vehObj.frontBumperMesh.rotation.set(0, 0, 0);
+    if (vehObj.rearBumperMesh) vehObj.rearBumperMesh.rotation.set(0, 0, 0);
+    if (vehObj.trunkMesh) vehObj.trunkMesh.rotation.set(0, 0, 0);
+    if (vehObj.sideBarL) vehObj.sideBarL.rotation.set(0, 0, 0);
+    if (vehObj.sideBarR) vehObj.sideBarR.rotation.set(0, 0, 0);
+  }
+
+  // 2. Restore all original materials and properties
+  if (vehObj.originalMaterials && vehObj.originalMaterials.length > 0) {
+    for (const record of vehObj.originalMaterials) {
+      const mesh = record.mesh;
+      if (mesh) {
+        if (Array.isArray(record.material)) {
+          mesh.material = record.material.map((m) => m.clone());
+        } else {
+          mesh.material = record.material.clone();
+        }
+
+        const primaryMat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
+        if (primaryMat) {
+          if (record.originalColor && primaryMat.color) {
+            primaryMat.color.copy(record.originalColor);
+          }
+          if (record.originalRoughness !== undefined) {
+            primaryMat.roughness = record.originalRoughness;
+          }
+          if (record.originalMetalness !== undefined) {
+            primaryMat.metalness = record.originalMetalness;
+          }
+          if (record.originalEmissive && primaryMat.emissive) {
+            primaryMat.emissive.copy(record.originalEmissive);
+          }
+          if (record.originalEmissiveIntensity !== undefined) {
+            primaryMat.emissiveIntensity = record.originalEmissiveIntensity;
+          }
+          if (record.originalOpacity !== undefined) {
+            primaryMat.opacity = record.originalOpacity;
+          }
+          if (record.originalTransparent !== undefined) {
+            primaryMat.transparent = record.originalTransparent;
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Re-enforce original configured paint and accent colors
+  const mainColor = new THREE.Color(vehObj.originalColor);
+  const accentColor = new THREE.Color(vehObj.accentColor);
+
+  vehObj.root.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh) {
+      const mesh = child as THREE.Mesh;
+      const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
+      if (mat && mat.name) {
+        if (mat.name.includes('DERBY_Mat_BodyPaint')) {
+          mat.color.copy(mainColor);
+        } else if (mat.name.includes('DERBY_Mat_AccentMetal')) {
+          mat.color.copy(accentColor);
+        }
+      }
+    }
+  });
 }
 
 // ── GLTF GLB ASSET LOADER & CACHE ──────────────────────────
@@ -238,7 +401,7 @@ function create3DVehicleFromGLB(
   const exhaustPoint = new THREE.Vector3(-0.60, 0.37, 2.13);
   const smokePoint = new THREE.Vector3(0.0, 0.65, -1.35);
 
-  return {
+  const veh: Vehicle3DObject = {
     root,
     bodyGroup,
     chassisMesh,
@@ -270,6 +433,8 @@ function create3DVehicleFromGLB(
     accentColor: accentColorHex,
     currentDamageLevel: 'CLEAN',
   };
+  captureOriginalVehicleVisualState(veh);
+  return veh;
 }
 
 // ==========================================================
@@ -360,7 +525,7 @@ function buildRoadCrusherV8(
   bodyGroup.add(roofMesh);
 
   // Window Steel Safety Bars
-  for (let zOffset of [-0.4, 0, 0.4]) {
+  for (const zOffset of [-0.4, 0, 0.4]) {
     const barL = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, cabinH * 0.85), steelMat);
     barL.position.set(-cabinW * 0.51, h * 0.82, l * 0.06 + zOffset);
     bodyGroup.add(barL);
@@ -376,7 +541,7 @@ function buildRoadCrusherV8(
   mainBar.castShadow = true;
   bullBarGroup.add(mainBar);
 
-  for (let xOffset of [-w * 0.40, -w * 0.15, w * 0.15, w * 0.40]) {
+  for (const xOffset of [-w * 0.40, -w * 0.15, w * 0.15, w * 0.40]) {
     const fang = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, h * 0.55), steelMat);
     fang.position.set(xOffset, h * 0.46, -l * 0.50);
     fang.castShadow = true;
@@ -469,7 +634,7 @@ function buildRoadCrusherV8(
   const exhaustPoint = new THREE.Vector3(-w * 0.49, h * 0.24, l * 0.20);
   const smokePoint = new THREE.Vector3(0, h * 0.88, -l * 0.28);
 
-  return {
+  const veh: Vehicle3DObject = {
     root,
     bodyGroup,
     chassisMesh,
@@ -496,6 +661,8 @@ function buildRoadCrusherV8(
     accentColor: accentColorHex,
     currentDamageLevel: 'CLEAN',
   };
+  captureOriginalVehicleVisualState(veh);
+  return veh;
 }
 
 // ==========================================================
@@ -664,7 +831,7 @@ function buildIronTanker(
   const exhaustPoint = new THREE.Vector3(-w * 0.40, h * 0.35, l * 0.48);
   const smokePoint = new THREE.Vector3(0, h * 0.85, -l * 0.30);
 
-  return {
+  const veh: Vehicle3DObject = {
     root,
     bodyGroup,
     chassisMesh,
@@ -691,6 +858,8 @@ function buildIronTanker(
     accentColor: accentColorHex,
     currentDamageLevel: 'CLEAN',
   };
+  captureOriginalVehicleVisualState(veh);
+  return veh;
 }
 
 // ==========================================================
@@ -869,7 +1038,7 @@ function buildApexPhantom(
   const exhaustPoint = new THREE.Vector3(0, h * 0.44, l * 0.46);
   const smokePoint = new THREE.Vector3(0, h * 0.55, -l * 0.30);
 
-  return {
+  const veh: Vehicle3DObject = {
     root,
     bodyGroup,
     chassisMesh,
@@ -896,6 +1065,8 @@ function buildApexPhantom(
     accentColor: accentColorHex,
     currentDamageLevel: 'CLEAN',
   };
+  captureOriginalVehicleVisualState(veh);
+  return veh;
 }
 
 // ==========================================================
@@ -980,7 +1151,7 @@ function buildArmoredJuggernaut(
   bullBarGroup.add(plowRight);
 
   // V-Plow Spikes
-  for (let s of [-w * 0.45, -w * 0.22, 0, w * 0.22, w * 0.45]) {
+  for (const s of [-w * 0.45, -w * 0.22, 0, w * 0.22, w * 0.45]) {
     const spike = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.42, 8), heavyIron);
     spike.rotation.x = -Math.PI / 2;
     spike.position.set(s, h * 0.45, -l * 0.55);
@@ -1064,7 +1235,7 @@ function buildArmoredJuggernaut(
   const exhaustPoint = new THREE.Vector3(-cabinW * 0.42, h * 1.70, l * 0.30);
   const smokePoint = new THREE.Vector3(0, h * 0.95, -l * 0.32);
 
-  return {
+  const veh: Vehicle3DObject = {
     root,
     bodyGroup,
     chassisMesh,
@@ -1091,6 +1262,9 @@ function buildArmoredJuggernaut(
     accentColor: accentColorHex,
     currentDamageLevel: 'CLEAN',
   };
+
+  captureOriginalVehicleVisualState(veh);
+  return veh;
 }
 
 // ── MASTER 3D VEHICLE FACTORY ──────────────────────────────
@@ -1108,49 +1282,52 @@ export function create3DVehicle(
     : vehicleId;
 
   let veh: Vehicle3DObject;
-  switch (normId) {
-    case 'iron_tanker':
-      veh = buildIronTanker(mainColorHex, accentColorHex, carNumber, 'IRON TANKER');
-      break;
-    case 'apex_phantom':
-      veh = buildApexPhantom(mainColorHex, accentColorHex, carNumber, 'APEX PHANTOM');
-      break;
-    case 'armored_juggernaut':
-      veh = buildArmoredJuggernaut(mainColorHex, accentColorHex, carNumber, 'JUGGERNAUT');
-      break;
-    case 'road_crusher':
-    default:
-      veh = buildRoadCrusherV8(mainColorHex, accentColorHex, carNumber, 'ROAD CRUSHER');
-      break;
-  }
-
-  const applyGLB = (scene: THREE.Group) => {
-    const glbClone = scene.clone(true);
-    glbClone.rotation.y = 0;
-    glbClone.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-    veh.bodyGroup.clear();
-    veh.bodyGroup.add(glbClone);
-    veh.wheelFLGroup.visible = false;
-    veh.wheelFRGroup.visible = false;
-    veh.wheelRLGroup.visible = false;
-    veh.wheelRRGroup.visible = false;
-  };
-
   if (cachedGLTFScenes[normId]) {
-    applyGLB(cachedGLTFScenes[normId]);
+    veh = create3DVehicleFromGLB(cachedGLTFScenes[normId], normId as VehicleId, mainColorHex, accentColorHex, carNumber, carTitle);
   } else {
+    switch (normId) {
+      case 'iron_tanker':
+        veh = buildIronTanker(mainColorHex, accentColorHex, carNumber, 'IRON TANKER');
+        break;
+      case 'apex_phantom':
+        veh = buildApexPhantom(mainColorHex, accentColorHex, carNumber, 'APEX PHANTOM');
+        break;
+      case 'armored_juggernaut':
+        veh = buildArmoredJuggernaut(mainColorHex, accentColorHex, carNumber, 'JUGGERNAUT');
+        break;
+      case 'road_crusher':
+      default:
+        veh = buildRoadCrusherV8(mainColorHex, accentColorHex, carNumber, 'ROAD CRUSHER');
+        break;
+    }
+
     preloadDerbyVehicleGLB(normId as VehicleId).then((scene) => {
       if (scene) {
-        applyGLB(scene);
+        const glbVeh = create3DVehicleFromGLB(scene, normId as VehicleId, mainColorHex, accentColorHex, carNumber, carTitle);
+        veh.bodyGroup.clear();
+        veh.bodyGroup.add(glbVeh.bodyGroup);
+        veh.hoodMesh = glbVeh.hoodMesh;
+        veh.frontBumperMesh = glbVeh.frontBumperMesh;
+        veh.rearBumperMesh = glbVeh.rearBumperMesh;
+        veh.trunkMesh = glbVeh.trunkMesh;
+        veh.sideBarL = glbVeh.sideBarL;
+        veh.sideBarR = glbVeh.sideBarR;
+        veh.windowL = glbVeh.windowL;
+        veh.windowR = glbVeh.windowR;
+        veh.headlightL = glbVeh.headlightL;
+        veh.headlightR = glbVeh.headlightR;
+        veh.taillightL = glbVeh.taillightL;
+        veh.taillightR = glbVeh.taillightR;
+        veh.chassisMesh = glbVeh.chassisMesh;
+        veh.cabinMesh = glbVeh.cabinMesh;
+        veh.originalMaterials = glbVeh.originalMaterials;
+        veh.originalTransforms = glbVeh.originalTransforms;
+        veh.currentDamageLevel = 'CLEAN';
       }
     });
   }
 
+  captureOriginalVehicleVisualState(veh);
   return veh;
 }
 
@@ -1212,7 +1389,16 @@ export function update3DVehicleObject(
 }
 
 // ── APPLY VISUAL DAMAGE DEFORMATION ────────────────────────
-function applyVisualDamageToMesh(vehObj: Vehicle3DObject, level: DamageLevel) {
+export function applyVisualDamageToMesh(vehObj: Vehicle3DObject, level: DamageLevel) {
+  if (level === 'CLEAN') {
+    resetVehicleVisualState(vehObj);
+    return;
+  }
+
+  // Restore clean baseline first before calculating new damage state
+  resetVehicleVisualState(vehObj);
+  vehObj.currentDamageLevel = level;
+
   const {
     hoodMesh,
     frontBumperMesh,
@@ -1273,17 +1459,18 @@ function applyVisualDamageToMesh(vehObj: Vehicle3DObject, level: DamageLevel) {
     }
   }
 
-  if (level === 'WRECKED') {
-    vehObj.bodyGroup.traverse((child: THREE.Object3D) => {
-      if ((child as THREE.Mesh).isMesh) {
-        const mesh = child as THREE.Mesh;
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        if (mat && mat.color) {
-          mat.color.multiplyScalar(0.6);
-          mat.roughness = Math.min(0.95, mat.roughness + 0.35);
+  // When WRECKED: deterministically calculate a 65% brightness tint from original baseline color
+  if (level === 'WRECKED' && vehObj.originalMaterials) {
+    for (const record of vehObj.originalMaterials) {
+      const mesh = record.mesh;
+      if (mesh && mesh.material) {
+        const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
+        if (mat && mat.color && record.originalColor) {
+          mat.color.copy(record.originalColor).multiplyScalar(0.65);
+          mat.roughness = Math.min(0.95, (record.originalRoughness ?? 0.35) + 0.35);
         }
       }
-    });
+    }
   }
 }
 

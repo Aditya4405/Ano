@@ -32,7 +32,14 @@ import {
 import { derbyAIController } from './DerbyAIController';
 import { derbySoundSystem } from './DerbySoundSystem';
 import { build3DArena, Derby3DArena } from './Derby3DArenaBuilder';
-import { create3DVehicle, preloadDerbyVehicleGLB, spawnImpactDebrisParts, update3DVehicleObject, Vehicle3DObject } from './Derby3DVehicleBuilder';
+import {
+  create3DVehicle,
+  preloadDerbyVehicleGLB,
+  resetVehicleVisualState,
+  spawnImpactDebrisParts,
+  update3DVehicleObject,
+  Vehicle3DObject,
+} from './Derby3DVehicleBuilder';
 import { DerbyParticleSystem } from './DerbyParticleSystem';
 import { socketService } from '@/lib/socket';
 
@@ -146,6 +153,7 @@ export function DemolitionDerbyCanvas({
   const [floatingHealthBars, setFloatingHealthBars] = useState<{
     id: string;
     name: string;
+    carNumber?: string;
     isPlayer: boolean;
     hp: number;
     maxHp: number;
@@ -890,11 +898,12 @@ export function DemolitionDerbyCanvas({
           aiTargets: [],
         });
 
-        // --- 7. CALCULATE 3D PROJECTIONS FOR FLOATING HEALTH BARS ---
+        // --- 7. CALCULATE 3D PROJECTIONS FOR WORLD-SPACE FLOATING HEALTH BARS ---
         const projVec = new THREE.Vector3();
         const activeBars: {
           id: string;
           name: string;
+          carNumber?: string;
           isPlayer: boolean;
           hp: number;
           maxHp: number;
@@ -904,12 +913,13 @@ export function DemolitionDerbyCanvas({
 
         allVehicleStates.forEach((v) => {
           if (v.isDestroyed || v.hp <= 0) return;
-          if (v.isPlayer) return;
 
-          projVec.set(v.x, (v.y || 0) + 1.9, v.z);
+          const heightOffset = (v.vehicleId === 'iron_tanker' || v.vehicleId === 'armored_juggernaut') ? 2.35 : 2.05;
+          projVec.set(v.x, (v.y || 0) + heightOffset, v.z);
           projVec.project(camera);
 
-          if (projVec.z > 1.0 || projVec.x < -1.1 || projVec.x > 1.1 || projVec.y < -1.1 || projVec.y > 1.1) {
+          // Skip if behind camera or far offscreen
+          if (projVec.z > 1.0 || projVec.x < -1.2 || projVec.x > 1.2 || projVec.y < -1.2 || projVec.y > 1.2) {
             return;
           }
 
@@ -919,7 +929,8 @@ export function DemolitionDerbyCanvas({
           activeBars.push({
             id: v.id,
             name: v.name,
-            isPlayer: v.isPlayer,
+            carNumber: v.carNumber,
+            isPlayer: Boolean(v.isPlayer),
             hp: Math.max(0, Math.round(v.hp)),
             maxHp: v.maxHp,
             screenX: sx,
@@ -1230,6 +1241,9 @@ export function DemolitionDerbyCanvas({
       window.removeEventListener('resize', handleResize);
       derbySoundSystem.stopEngineSound();
       particleSystem.clear();
+      vehicle3DMeshesMap.forEach((vMesh) => {
+        resetVehicleVisualState(vMesh);
+      });
       if (mountNode.contains(renderer.domElement)) {
         mountNode.removeChild(renderer.domElement);
       }
@@ -1405,28 +1419,47 @@ export function DemolitionDerbyCanvas({
         ))}
       </div>
 
-      {/* FLOATING WORLD-SPACE HEALTH BARS ABOVE AI VEHICLES */}
+      {/* 3D WORLD-SPACE FLOATING HEALTH BARS & NAMEPLATES ABOVE VEHICLES */}
       {floatingHealthBars.map((bar) => {
         const hpPercent = Math.max(0, Math.min(100, (bar.hp / bar.maxHp) * 100));
-        const barColor = hpPercent > 60 ? 'bg-emerald-500' : hpPercent > 30 ? 'bg-amber-500' : 'bg-red-600';
+        const barColor = hpPercent > 60 ? 'bg-emerald-500' : hpPercent > 30 ? 'bg-amber-500' : 'bg-red-600 animate-pulse';
 
         return (
           <div
             key={bar.id}
-            className="absolute top-0 left-0 -translate-x-1/2 -translate-y-full pointer-events-none z-20 transition-transform duration-75"
+            className="absolute top-0 left-0 pointer-events-none z-20 will-change-transform"
             style={{
-              transform: `translate3d(${bar.screenX}px, ${bar.screenY}px, 0)`,
+              transform: `translate3d(${bar.screenX}px, ${bar.screenY}px, 0) translate(-50%, -100%)`,
             }}
           >
-            <div className="bg-neutral-950/90 border border-white/20 px-2.5 py-1 rounded-lg backdrop-blur-md shadow-2xl min-w-[108px] text-center select-none">
-              <div className="flex justify-between items-center text-[10px] font-black tracking-wider mb-0.5 gap-2">
-                <span className="text-white uppercase truncate max-w-[65px] drop-shadow-sm">{bar.name}</span>
-                <span className="text-gray-300 font-mono text-[9px]">{bar.hp} / {bar.maxHp}</span>
+            <div
+              className={`w-[116px] px-2.5 py-1.5 rounded-xl backdrop-blur-md shadow-2xl select-none text-center transition-all ${
+                bar.isPlayer
+                  ? 'bg-neutral-950/95 border border-amber-400/60 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+                  : 'bg-neutral-950/90 border border-white/20'
+              }`}
+            >
+              {/* Header: Name & Car Number & YOU badge */}
+              <div className="flex justify-between items-center text-[10px] font-black tracking-wider mb-1 gap-1.5">
+                <div className="flex items-center gap-1 min-w-0">
+                  {bar.isPlayer && (
+                    <span className="px-1 py-0.2 bg-amber-500 text-black text-[7.5px] font-black rounded shrink-0 leading-none">
+                      YOU
+                    </span>
+                  )}
+                  <span className={`uppercase truncate max-w-[65px] drop-shadow-sm ${bar.isPlayer ? 'text-amber-300 font-extrabold' : 'text-white'}`}>
+                    {bar.name} {bar.carNumber ? `#${bar.carNumber}` : ''}
+                  </span>
+                </div>
+                <span className="text-gray-300 font-mono text-[9px] font-bold tabular-nums shrink-0">
+                  {bar.hp}/{bar.maxHp}
+                </span>
               </div>
+
               {/* Health Bar Progress Track */}
-              <div className="w-full bg-neutral-900 h-2.5 rounded-sm overflow-hidden border border-black/70 p-0.5">
+              <div className="w-full bg-neutral-900 h-1.5 rounded-full overflow-hidden border border-black/80 p-0.5">
                 <div
-                  className={`h-full rounded-xs transition-all duration-75 ${barColor}`}
+                  className={`h-full rounded-full transition-all duration-100 ${barColor}`}
                   style={{ width: `${hpPercent}%` }}
                 />
               </div>
